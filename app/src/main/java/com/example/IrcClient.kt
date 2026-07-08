@@ -1,0 +1,473 @@
+package com.example
+
+import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.BufferedReader
+import java.io.BufferedWriter
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
+import java.net.Socket
+import java.nio.charset.Charset
+
+enum class IrcConnectionState {
+    DISCONNECTED,
+    CONNECTING,
+    CONNECTED,
+    ERROR
+}
+
+data class IrcMessage(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val sender: String?, // nick of the sender, or server name, or "System"
+    val target: String?, // channel (e.g., #thaiirc) or user, or null for system
+    val text: String,
+    val isSystem: Boolean = false,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+class IrcClient {
+    private val _connectionState = MutableStateFlow(IrcConnectionState.DISCONNECTED)
+    val connectionState: StateFlow<IrcConnectionState> = _connectionState.asStateFlow()
+
+    private val _messages = MutableStateFlow<List<IrcMessage>>(emptyList())
+    val messages: StateFlow<List<IrcMessage>> = _messages.asStateFlow()
+
+    private val _currentChannel = MutableStateFlow("#thaiirc")
+    val currentChannel: StateFlow<String> = _currentChannel.asStateFlow()
+
+    private val _joinedChannels = MutableStateFlow<Set<String>>(setOf("#thaiirc"))
+    val joinedChannels: StateFlow<Set<String>> = _joinedChannels.asStateFlow()
+
+    private val _channelUsers = MutableStateFlow<Map<String, Set<String>>>(emptyMap()) // Channel -> Users set
+    val channelUsers: StateFlow<Map<String, Set<String>>> = _channelUsers.asStateFlow()
+
+    private val _currentNick = MutableStateFlow("ThaiUser_${(1000..9999).random()}")
+    val currentNick: StateFlow<String> = _currentNick.asStateFlow()
+
+    private val _quitMessage = MutableStateFlow("Quit: app.thaiirc.com - live radio v2.0")
+    val quitMessage: StateFlow<String> = _quitMessage.asStateFlow()
+
+    private val _errorFlow = MutableSharedFlow<String>()
+    val errorFlow: SharedFlow<String> = _errorFlow.asSharedFlow()
+
+    private var socket: Socket? = null
+    private var reader: BufferedReader? = null
+    private var writer: BufferedWriter? = null
+    private var connectionJob: Job? = null
+    private val scope = CoroutineScope(Dispatchers.IO)
+
+    // Last used connection parameters for auto-reconnection
+    private var lastNick: String = ""
+    private var lastServer: String = "irc.thaiirc.com"
+    private var lastPort: Int = 6667
+    private var userRequestedDisconnect = false
+    private var reconnectJob: Job? = null
+
+    // We changed the encoding back to UTF-8 as requested by the user
+    private val thaiCharset: Charset = java.nio.charset.StandardCharsets.UTF_8
+
+    fun updateNick(newNick: String) {
+        val trimmed = newNick.trim().replace(" ", "_")
+        if (trimmed.isNotEmpty()) {
+            if (_connectionState.value == IrcConnectionState.CONNECTED) {
+                sendRaw("NICK $trimmed")
+            } else {
+                _currentNick.value = trimmed
+            }
+        }
+    }
+
+    fun updateQuitMessage(newMsg: String) {
+        _quitMessage.value = newMsg
+    }
+
+    fun updateCurrentChannel(channel: String) {
+        _currentChannel.value = channel
+    }
+
+    fun connect(nick: String, server: String = "irc.thaiirc.com", port: Int = 6667) {
+        val trimmedNick = nick.trim().replace(" ", "_")
+        if (trimmedNick.isEmpty()) {
+            scope.launch { _errorFlow.emit("กรุณาใส่ชื่อเล่น (Nickname)") }
+            return
+        }
+
+        // Save last connection state
+        lastNick = trimmedNick
+        lastServer = server
+        lastPort = port
+        userRequestedDisconnect = false
+        reconnectJob?.cancel()
+
+        if (_connectionState.value == IrcConnectionState.CONNECTED || _connectionState.value == IrcConnectionState.CONNECTING) return
+
+        _currentNick.value = trimmedNick
+        _connectionState.value = IrcConnectionState.CONNECTING
+        addSystemMessage("กำลังเชื่อมต่อเซิร์ฟเวอร์ $server:$port...")
+
+        connectionJob = scope.launch {
+            try {
+                val s = Socket(server, port)
+                s.keepAlive = true // Enable keep alive to keep background connection stable
+                s.tcpNoDelay = true
+                socket = s
+                reader = BufferedReader(InputStreamReader(s.getInputStream(), thaiCharset))
+                writer = BufferedWriter(OutputStreamWriter(s.getOutputStream(), thaiCharset))
+
+                _connectionState.value = IrcConnectionState.CONNECTED
+                addSystemMessage("เชื่อมต่อสำเร็จ! กำลังยืนยันตัวตนด้วยชื่อเล่น $trimmedNick...")
+
+                // Send handshake
+                sendRaw("NICK $trimmedNick")
+                sendRaw("USER $trimmedNick 0 * :ThaiIRC Client App")
+
+                // Start listening
+                listenLoop()
+            } catch (e: Exception) {
+                Log.e("IrcClient", "Connection error", e)
+                _connectionState.value = IrcConnectionState.ERROR
+                addSystemMessage("การเชื่อมต่อล้มเหลว: ${e.localizedMessage ?: "ไม่สามารถเชื่อมต่อได้"}")
+                disconnectInternal()
+
+                // If it wasn't a manual user action, retry connecting in a few seconds
+                if (!userRequestedDisconnect) {
+                    scheduleReconnection()
+                }
+            }
+        }
+    }
+
+    fun disconnect() {
+        userRequestedDisconnect = true
+        reconnectJob?.cancel()
+        addSystemMessage("กำลังตัดการเชื่อมต่อ...")
+        scope.launch {
+            if (_connectionState.value == IrcConnectionState.CONNECTED) {
+                sendRaw("QUIT :${_quitMessage.value}")
+                kotlinx.coroutines.delay(200)
+            }
+            withContext(Dispatchers.Main) {
+                disconnectInternal()
+            }
+        }
+    }
+
+    private fun disconnectInternal() {
+        _connectionState.value = IrcConnectionState.DISCONNECTED
+        try {
+            socket?.close()
+        } catch (e: Exception) {}
+        socket = null
+        reader = null
+        writer = null
+        connectionJob?.cancel()
+        connectionJob = null
+    }
+
+    private fun scheduleReconnection() {
+        if (userRequestedDisconnect) return
+        reconnectJob?.cancel()
+        reconnectJob = scope.launch {
+            // Wait 5 seconds before retrying
+            addSystemMessage("กำลังจะเชื่อมต่อใหม่ในอีก 5 วินาที...")
+            kotlinx.coroutines.delay(5000)
+            if (!userRequestedDisconnect && _connectionState.value != IrcConnectionState.CONNECTED && _connectionState.value != IrcConnectionState.CONNECTING) {
+                withContext(Dispatchers.Main) {
+                    connect(lastNick, lastServer, lastPort)
+                }
+            }
+        }
+    }
+
+    fun sendChatMessage(target: String, message: String) {
+        val trimmedMsg = message.trim()
+        if (trimmedMsg.isEmpty()) return
+
+        if (_connectionState.value != IrcConnectionState.CONNECTED) {
+            addSystemMessage("ข้อผิดพลาด: ยังไม่ได้เชื่อมต่อเซิร์ฟเวอร์")
+            return
+        }
+
+        if (trimmedMsg.startsWith("/")) {
+            handleCommand(trimmedMsg)
+        } else {
+            sendRaw("PRIVMSG $target :$trimmedMsg")
+            addMessage(IrcMessage(sender = _currentNick.value, target = target, text = trimmedMsg))
+        }
+    }
+
+    private fun handleCommand(cmd: String) {
+        val parts = cmd.trim().split(" ", limit = 2)
+        val commandName = parts[0].uppercase()
+        val arg = if (parts.size > 1) parts[1] else ""
+
+        when (commandName) {
+            "/JOIN" -> {
+                if (arg.isNotEmpty()) {
+                    val channel = if (arg.startsWith("#")) arg else "#$arg"
+                    sendRaw("JOIN $channel")
+                } else {
+                    addSystemMessage("วิธีใช้: /join #ชื่อห้อง")
+                }
+            }
+            "/PART" -> {
+                val channel = if (arg.isNotEmpty()) arg else _currentChannel.value
+                sendRaw("PART $channel")
+            }
+            "/NICK" -> {
+                if (arg.isNotEmpty()) {
+                    sendRaw("NICK $arg")
+                } else {
+                    addSystemMessage("วิธีใช้: /nick ชื่อเล่นใหม่")
+                }
+            }
+            "/ME" -> {
+                if (arg.isNotEmpty()) {
+                    val channel = _currentChannel.value
+                    sendRaw("PRIVMSG $channel :\u0001ACTION $arg\u0001")
+                    addMessage(IrcMessage(sender = "*", target = channel, text = "${_currentNick.value} $arg"))
+                } else {
+                    addSystemMessage("วิธีใช้: /me ข้อความการกระทำ")
+                }
+            }
+            "/QUIT" -> {
+                sendRaw("QUIT :$arg")
+                disconnectInternal()
+            }
+            "/MSG" -> {
+                val msgParts = arg.split(" ", limit = 2)
+                if (msgParts.size == 2) {
+                    val target = msgParts[0]
+                    val text = msgParts[1]
+                    sendRaw("PRIVMSG $target :$text")
+                    addMessage(IrcMessage(sender = "${_currentNick.value} ➔ $target", target = target, text = text))
+                } else {
+                    addSystemMessage("วิธีใช้: /msg ชื่อคนรับ ข้อความ")
+                }
+            }
+            else -> {
+                sendRaw(cmd.substring(1))
+            }
+        }
+    }
+
+    fun sendRaw(line: String) {
+        scope.launch {
+            try {
+                writer?.let {
+                    it.write("$line\r\n")
+                    it.flush()
+                    Log.d("IrcClient", "SENT: $line")
+                }
+            } catch (e: Exception) {
+                Log.e("IrcClient", "Error sending line: $line", e)
+                addSystemMessage("ล้มเหลวในการส่งข้อความ: ${e.localizedMessage}")
+            }
+        }
+    }
+
+    private suspend fun listenLoop() {
+        withContext(Dispatchers.IO) {
+            try {
+                var line: String?
+                while (reader?.readLine().also { line = it } != null) {
+                    val currentLine = line ?: break
+                    Log.d("IrcClient", "RECV: $currentLine")
+                    parseIrcLine(currentLine)
+                }
+            } catch (e: Exception) {
+                Log.e("IrcClient", "Error in listen loop", e)
+            } finally {
+                withContext(Dispatchers.Main) {
+                    if (_connectionState.value == IrcConnectionState.CONNECTED || _connectionState.value == IrcConnectionState.CONNECTING) {
+                        if (!userRequestedDisconnect) {
+                            addSystemMessage("การเชื่อมต่อเซิร์ฟเวอร์ขาดหาย กำลังพยายามเชื่อมต่อใหม่...")
+                        } else {
+                            addSystemMessage("การเชื่อมต่อเซิร์ฟเวอร์ขาดหาย...")
+                        }
+                        disconnectInternal()
+                    }
+                    if (!userRequestedDisconnect) {
+                        scheduleReconnection()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun parseIrcLine(line: String) {
+        try {
+            if (line.startsWith("PING ")) {
+                val server = line.substring(5)
+                sendRaw("PONG $server")
+                return
+            }
+
+            var prefix = ""
+            var remaining = line
+
+            if (line.startsWith(":")) {
+                val spaceIndex = line.indexOf(' ')
+                if (spaceIndex != -1) {
+                    prefix = line.substring(1, spaceIndex)
+                    remaining = line.substring(spaceIndex + 1)
+                }
+            }
+
+            val parts = remaining.split(" :", limit = 2)
+            val mainParts = parts[0].trim().split(" ")
+            val command = mainParts[0].uppercase()
+            val params = mainParts.subList(1, mainParts.size)
+            val trailing = if (parts.size > 1) parts[1] else ""
+
+            val senderNick = if (prefix.contains("!")) {
+                prefix.substringBefore("!")
+            } else {
+                prefix
+            }
+
+            when (command) {
+                "PRIVMSG" -> {
+                    val target = if (params.isNotEmpty()) params[0] else ""
+                    val isAction = trailing.startsWith("\u0001ACTION ") && trailing.endsWith("\u0001")
+                    val messageText = if (isAction) {
+                        trailing.substring(8, trailing.length - 1)
+                    } else {
+                        trailing
+                    }
+                    
+                    val dispSender = if (isAction) "*" else senderNick
+                    val dispText = if (isAction) "$senderNick $messageText" else messageText
+
+                    addMessage(IrcMessage(sender = dispSender, target = target, text = dispText))
+                }
+                "JOIN" -> {
+                    val channel = if (trailing.isNotEmpty()) trailing else (if (params.isNotEmpty()) params[0] else "")
+                    if (channel.isNotEmpty()) {
+                        if (senderNick == _currentNick.value) {
+                            _joinedChannels.value = _joinedChannels.value + channel
+                            _currentChannel.value = channel
+                            addSystemMessage("คุณได้เข้าร่วมห้องแชท $channel แล้ว")
+                        } else {
+                            addMessage(IrcMessage(sender = "System", target = channel, text = "➡ $senderNick เข้าสู่ห้องแชท", isSystem = true))
+                        }
+                        sendRaw("NAMES $channel")
+                    }
+                }
+                "PART" -> {
+                    val channel = if (params.isNotEmpty()) params[0] else trailing
+                    if (channel.isNotEmpty()) {
+                        if (senderNick == _currentNick.value) {
+                            _joinedChannels.value = _joinedChannels.value - channel
+                            if (_currentChannel.value == channel) {
+                                _currentChannel.value = _joinedChannels.value.firstOrNull() ?: ""
+                            }
+                            addSystemMessage("คุณได้ออกจากห้องแชท $channel แล้ว")
+                        } else {
+                            addMessage(IrcMessage(sender = "System", target = channel, text = "⬅ $senderNick ออกจากห้องแชท", isSystem = true))
+                            // Remove from names
+                            val currentList = _channelUsers.value[channel] ?: emptySet()
+                            updateChannelUsers(channel, currentList - senderNick)
+                        }
+                    }
+                }
+                "QUIT" -> {
+                    val reason = trailing
+                    _joinedChannels.value.forEach { chan ->
+                        val users = _channelUsers.value[chan] ?: emptySet()
+                        if (users.contains(senderNick)) {
+                            addMessage(IrcMessage(sender = "System", target = chan, text = "❌ $senderNick ออกจากการเชื่อมต่อ ($reason)", isSystem = true))
+                            updateChannelUsers(chan, users - senderNick)
+                        }
+                    }
+                }
+                "NICK" -> {
+                    val newNick = if (trailing.isNotEmpty()) trailing else (if (params.isNotEmpty()) params[0] else "")
+                    if (newNick.isNotEmpty()) {
+                        if (senderNick == _currentNick.value) {
+                            _currentNick.value = newNick
+                            addSystemMessage("เปลี่ยนชื่อเล่นเป็น: $newNick")
+                        } else {
+                            _joinedChannels.value.forEach { chan ->
+                                val users = _channelUsers.value[chan] ?: emptySet()
+                                if (users.contains(senderNick)) {
+                                    addMessage(IrcMessage(sender = "System", target = chan, text = "✎ $senderNick เปลี่ยนชื่อเล่นเป็น $newNick", isSystem = true))
+                                    updateChannelUsers(chan, (users - senderNick) + newNick)
+                                }
+                            }
+                        }
+                    }
+                }
+                "353" -> {
+                    // NAMREPLY format: <client> <symbol> <channel> :[prefix]user1 [prefix]user2
+                    val channel = params.getOrNull(2) ?: ""
+                    if (channel.isNotEmpty()) {
+                        val userList = trailing.split(" ")
+                            .map { it.replace(Regex("^[@+~&%]"), "") }
+                            .filter { it.isNotEmpty() }
+                            .toSet()
+
+                        val currentList = _channelUsers.value[channel] ?: emptySet()
+                        updateChannelUsers(channel, currentList + userList)
+                    }
+                }
+                "366" -> {
+                    // End of NAMES list.
+                }
+                "001", "002", "003", "004", "372", "375", "376" -> {
+                    addSystemMessage(trailing)
+                    if (command == "001") {
+                        // Auto-join default room
+                        scope.launch {
+                            kotlinx.coroutines.delay(1000)
+                            sendRaw("JOIN ${_currentChannel.value}")
+                        }
+                    }
+                }
+                "433" -> {
+                    addSystemMessage("ชื่อเล่น ${_currentNick.value} ถูกใช้งานอยู่แล้ว กำลังสุ่มชื่อเล่นอื่นแทน...")
+                    val altNick = "${_currentNick.value.take(9)}_${(10..99).random()}"
+                    _currentNick.value = altNick
+                    sendRaw("NICK $altNick")
+                }
+                else -> {
+                    if (trailing.isNotEmpty()) {
+                        addSystemMessage(trailing)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("IrcClient", "Error parsing: $line", e)
+        }
+    }
+
+    private fun addSystemMessage(text: String) {
+        val msg = IrcMessage(
+            sender = "System",
+            target = null,
+            text = text,
+            isSystem = true
+        )
+        _messages.value = _messages.value + msg
+    }
+
+    private fun addMessage(msg: IrcMessage) {
+        _messages.value = _messages.value + msg
+    }
+
+    private fun updateChannelUsers(channel: String, users: Set<String>) {
+        val currentMap = _channelUsers.value.toMutableMap()
+        currentMap[channel] = users
+        _channelUsers.value = currentMap
+    }
+}

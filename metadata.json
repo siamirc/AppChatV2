@@ -1,0 +1,6 @@
+{
+  "name": "ThaiIRC",
+  "description": "แอปพลิเคชันเชื่อมต่อแชท IRC thaiirc.com และฟังวิทยุออนไลน์จาก Icecast",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
