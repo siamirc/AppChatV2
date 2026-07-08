@@ -11,7 +11,18 @@ plugins {
 
 android {
   namespace = "com.example"
-  compileSdk { version = release(36) { minorApiLevel = 1 } }
+  compileSdk { version = release(36) { minorApiLevel = 1 } 
+// เพิ่มเข้าไปในบล็อก android { ... } ด้านล่างสุด
+applicationVariants.all {
+    val variant = this
+    if (System.getenv("GITHUB_ACTIONS") == "true") {
+        tasks.matching { it.name.contains("kspDebugKotlin") }.configureEach {
+            enabled = false
+        }
+    }
+}
+
+}
 
   defaultConfig {
     applicationId = "com.aistudio.thaiirc.chatradio.wvmzpl"
