@@ -3,10 +3,10 @@ import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesS
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
-  //alias(libs.plugins.google.devtools.ksp)
-  //alias(libs.plugins.roborazzi)
-  //alias(libs.plugins.secrets)
-  //alias(libs.plugins.google.services)
+  alias(libs.plugins.google.devtools.ksp)
+  alias(libs.plugins.roborazzi)
+  alias(libs.plugins.secrets)
+  alias(libs.plugins.google.services)
 }
 
 android {
@@ -127,4 +127,12 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
+}
+// บังคับให้ KSP ประมวลผลบนหน่วยความจำหลักโดยตรง ไม่ต้องสร้างกระบวนการย่อยบนคลาวด์
+tasks.withType<com.google.devtools.ksp.gradle.KspAATask>().configureEach {
+    @Suppress("SuspiciousCollectionReassignment")
+    compilerOptions.get().freeCompilerArgs += listOf(
+        "-Djava.awt.headless=true",
+        "-Xmx2g"
+    )
 }
