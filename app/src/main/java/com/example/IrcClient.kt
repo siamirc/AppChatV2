@@ -51,7 +51,7 @@ class IrcClient {
     private val _channelUsers = MutableStateFlow<Map<String, Set<String>>>(emptyMap()) // Channel -> Users set
     val channelUsers: StateFlow<Map<String, Set<String>>> = _channelUsers.asStateFlow()
 
-    private val _currentNick = MutableStateFlow("ThaiUser_${(1000..9999).random()}")
+    private val _currentNick = MutableStateFlow("Thai${(1000..9999).random()}")
     val currentNick: StateFlow<String> = _currentNick.asStateFlow()
 
     private val _quitMessage = MutableStateFlow("Quit: app.thaiirc.com - live radio v2.0")
@@ -77,7 +77,7 @@ class IrcClient {
     private val thaiCharset: Charset = java.nio.charset.StandardCharsets.UTF_8
 
     fun updateNick(newNick: String) {
-        val trimmed = newNick.trim().replace(" ", "_")
+        val trimmed = newNick.trim().replace(" ", "")
         if (trimmed.isNotEmpty()) {
             if (_connectionState.value == IrcConnectionState.CONNECTED) {
                 sendRaw("NICK $trimmed")
@@ -96,7 +96,7 @@ class IrcClient {
     }
 
     fun connect(nick: String, server: String = "irc.thaiirc.com", port: Int = 6667) {
-        val trimmedNick = nick.trim().replace(" ", "_")
+        val trimmedNick = nick.trim().replace(" ", "")
         if (trimmedNick.isEmpty()) {
             scope.launch { _errorFlow.emit("กรุณาใส่ชื่อเล่น (Nickname)") }
             return
@@ -436,7 +436,12 @@ class IrcClient {
                 }
                 "433" -> {
                     addSystemMessage("ชื่อเล่น ${_currentNick.value} ถูกใช้งานอยู่แล้ว กำลังสุ่มชื่อเล่นอื่นแทน...")
-                    val altNick = "${_currentNick.value.take(9)}_${(10..99).random()}"
+                    val baseNick = _currentNick.value.replace("_", "")
+                    val altNick = if (baseNick.length > 5) {
+                        baseNick.take(5) + (100..999).random()
+                    } else {
+                        baseNick + (100..999).random()
+                    }
                     _currentNick.value = altNick
                     sendRaw("NICK $altNick")
                 }

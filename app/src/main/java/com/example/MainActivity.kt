@@ -866,7 +866,7 @@ fun ConnectionSetupPanel(
                 value = nickname,
                 onValueChange = onNicknameChange,
                 label = { Text("ชื่อเล่น (Nickname)") },
-                placeholder = { Text("เช่น ThaiUser_99") },
+                placeholder = { Text("เช่น Thai1234") },
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null, tint = NeonBlue) },
                 colors = OutlinedTextFieldDefaults.colors(
