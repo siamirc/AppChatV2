@@ -18,6 +18,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -248,33 +249,40 @@ fun IrcRadioApp(viewModel: MainViewModel) {
                 .background(CosmicBackground)
         ) {
             if (connectionState == IrcConnectionState.DISCONNECTED || connectionState == IrcConnectionState.ERROR) {
-                // SECTION 1: Radio Player Widget (Visible on setup screen)
-                RadioPlayerCard(
-                    currentStation = currentStation,
-                    playbackState = playbackState,
-                    volume = volume,
-                    stations = viewModel.radioPlayer.stations,
-                    onPlayPause = { viewModel.radioPlayer.togglePlayPause() },
-                    onStop = { viewModel.radioPlayer.stop() },
-                    onStationSelect = { viewModel.radioPlayer.selectStation(it) },
-                    onVolumeChange = { viewModel.radioPlayer.setVolume(it) }
-                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // SECTION 1: Radio Player Widget (Visible on setup screen)
+                    RadioPlayerCard(
+                        currentStation = currentStation,
+                        playbackState = playbackState,
+                        volume = volume,
+                        stations = viewModel.radioPlayer.stations,
+                        onPlayPause = { viewModel.radioPlayer.togglePlayPause() },
+                        onStop = { viewModel.radioPlayer.stop() },
+                        onStationSelect = { viewModel.radioPlayer.selectStation(it) },
+                        onVolumeChange = { viewModel.radioPlayer.setVolume(it) }
+                    )
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Connection Configuration Panel
-                ConnectionSetupPanel(
-                    nickname = nicknameInput,
-                    onNicknameChange = { nicknameInput = it },
-                    defaultChannel = channelInput,
-                    onChannelChange = { channelInput = it },
-                    isConnecting = connectionState == IrcConnectionState.CONNECTING,
-                    onConnect = {
-                        keyboardController?.hide()
-                        viewModel.ircClient.updateCurrentChannel(channelInput)
-                        viewModel.ircClient.connect(nicknameInput)
-                    }
-                )
+                    // Connection Configuration Panel
+                    ConnectionSetupPanel(
+                        nickname = nicknameInput,
+                        onNicknameChange = { nicknameInput = it },
+                        defaultChannel = channelInput,
+                        onChannelChange = { channelInput = it },
+                        isConnecting = connectionState == IrcConnectionState.CONNECTING,
+                        onConnect = {
+                            keyboardController?.hide()
+                            viewModel.ircClient.updateCurrentChannel(channelInput)
+                            viewModel.ircClient.connect(nicknameInput)
+                        }
+                    )
+                }
             } else {
                 // When connected, switch views based on selected tab
                 if (currentTab == AppTab.CHAT) {
@@ -576,76 +584,7 @@ fun RadioPlayerCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Marquee Banner showing currently playing songs
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 8.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(playerTextColor.copy(alpha = 0.08f))
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.MusicNote,
-                    contentDescription = null,
-                    tint = playerTextColor,
-                    modifier = Modifier.size(14.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "รายการเพลง: ",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = playerTextColor
-                    )
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                // Scrolling marquee content
-                val marqueeSongs = if (currentStation?.id == "icecast") {
-                    "🎶 1. คุกกี้เสี่ยงทาย - BNK48 (ขอโดย: User_32)  •  2. ซ่อนกลิ่น - Palmy (ขอโดย: ThaiBoy)  •  3. รักแรก - Nont Tanont (ขอโดย: SweetGirl)  •  4. วัดปะหล่ะ? - 4EVE (ขอโดย: MusicLover)  •  ขอเพลงได้ฟรีผ่านห้องแชทพิมพ์ /radio ได้ตลอด 24 ชั่วโมง! 🎶"
-                } else {
-                    "🎶 1. สองใจ - ดา เอ็นโดรฟิน (ขอโดย: Admin_Thai)  •  2. พิง - Nont Tanont (ขอโดย: IceCream)  •  3. กลิ่นดอกไม้ - Newery (ขอโดย: NightCat)  •  4. โต๊ะริม - Nont Tanont (ขอโดย: Smile99)  •  ขอเพลงผ่านหน้าห้องแชทพิมพ์ /radio เพื่อฟังแบบสดๆ เลย! 🎶"
-                }
-                
-                Box(
-                    modifier = Modifier.weight(1f)
-                ) {
-                    val scrollState = rememberScrollState()
-                    LaunchedEffect(marqueeSongs) {
-                        scrollState.scrollTo(0)
-                        while (true) {
-                            kotlinx.coroutines.delay(1200)
-                            val maxScroll = scrollState.maxValue
-                            if (maxScroll > 0) {
-                                scrollState.animateScrollTo(
-                                    value = maxScroll,
-                                    animationSpec = tween(
-                                        durationMillis = maxScroll * 25,
-                                        easing = LinearEasing
-                                    )
-                                )
-                                kotlinx.coroutines.delay(1200)
-                                scrollState.scrollTo(0)
-                            } else {
-                                kotlinx.coroutines.delay(2000)
-                            }
-                        }
-                    }
-                    Text(
-                        text = marqueeSongs,
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            color = playerTextColor,
-                            fontSize = 11.sp
-                        ),
-                        maxLines = 1,
-                        softWrap = false,
-                        modifier = Modifier.horizontalScroll(scrollState, enabled = false)
-                    )
-                }
-            }
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Row 2: Selectable Station Chips (Port 8000 & 8002)
             Row(
@@ -853,7 +792,7 @@ fun ConnectionSetupPanel(
             )
 
             Text(
-                text = "เข้าแชทคุยสดผ่านเซิร์ฟเวอร์หลัก irc.thaiirc.com และเลือกช่องฟังเพลงได้ทันทีฟรี 24 ชม.",
+                text = "เข้าแชทคุยสด irc.thaiirc.com ขอและฟังเพลง 24 ชม.",
                 style = MaterialTheme.typography.bodySmall.copy(
                     color = MutedGray,
                     textAlign = TextAlign.Center
@@ -927,7 +866,7 @@ fun ConnectionSetupPanel(
                 } else {
                     Icon(Icons.Filled.Login, contentDescription = null, tint = SoftWhite)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("เข้าสู่เครือข่ายแชท", fontWeight = FontWeight.Bold, color = SoftWhite)
+                    Text("เข้าสู่แชท", fontWeight = FontWeight.Bold, color = SoftWhite)
                 }
             }
         }
@@ -1129,36 +1068,6 @@ fun ChatInterfacePanel(
                 .imePadding()
                 .padding(12.dp)
         ) {
-            // Quick IRC commands bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                val commands = listOf("/me", "/join", "/part", "/nick")
-                commands.forEach { command ->
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(CosmicCard)
-                            .clickable {
-                                val textToSet = if (chatInput.isEmpty()) "$command " else "$chatInput $command "
-                                onChatInputChange(textToSet)
-                            }
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = command,
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = NeonCyan
-                            )
-                        )
-                    }
-                }
-            }
-
             // Keyboard field + Send Action
             Row(
                 modifier = Modifier
