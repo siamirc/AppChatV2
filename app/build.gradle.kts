@@ -12,16 +12,6 @@ plugins {
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } 
-// เพิ่มเข้าไปในบล็อก android { ... } ด้านล่างสุด
-applicationVariants.all {
-    val variant = this
-    if (System.getenv("GITHUB_ACTIONS") == "true") {
-        tasks.matching { it.name.contains("kspDebugKotlin") }.configureEach {
-            enabled = false
-        }
-    }
-}
-
 }
 
   defaultConfig {
@@ -138,4 +128,14 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
+}
+// วางไว้บรรทัดล่างสุดของไฟล์ นอกบล็อก android { } ครับ
+androidComponents {
+    onVariants { variant ->
+        if (System.getenv("GITHUB_ACTIONS") == "true") {
+            tasks.matching { it.name.contains("ksp${variant.name.replaceFirstChar { it.uppercase() }}Kotlin") }.configureEach {
+                enabled = false
+            }
+        }
+    }
 }
