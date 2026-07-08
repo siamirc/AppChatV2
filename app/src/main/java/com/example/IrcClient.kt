@@ -128,8 +128,9 @@ class IrcClient {
                 addSystemMessage("เชื่อมต่อสำเร็จ! กำลังยืนยันตัวตนด้วยชื่อเล่น $trimmedNick...")
 
                 // Send handshake
+                val ident = "Thai${(1000..9999).random()}"
                 sendRaw("NICK $trimmedNick")
-                sendRaw("USER $trimmedNick 0 * :ThaiIRC Client App")
+                sendRaw("USER $ident 0 * :ThaiIRC Client App")
 
                 // Start listening
                 listenLoop()
