@@ -28,11 +28,11 @@ jobs:
         run: |
           keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
-      # เพิ่มพารามิเตอร์ล้างหัวเชื้อแคชและสั่งรันแบบไร้ Daemon แยกย่อย
+      # แก้ไขบรรทัดนี้: เปลี่ยนพารามิเตอร์ตัวสุดท้ายเป็น --no-parallel ตามกฎของ Gradle 9 สากลครับ
       - name: Build Debug APK
         env:
           JAVA_TOOL_OPTIONS: "-Djava.awt.headless=true"
-        run: gradle assembleDebug -x lint --no-daemon --no-build-cache --no-configuration-cache --parallel=false
+        run: gradle assembleDebug -x lint --no-daemon --no-build-cache --no-configuration-cache --no-parallel
         
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
