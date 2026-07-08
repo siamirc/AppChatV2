@@ -28,10 +28,8 @@ jobs:
         run: |
           keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
-      # บิลด์ในโหมดมาตรฐาน ปล่อยให้ KSP2 ทำงานแบบประหยัดแรมเพื่อไม่ให้ระบบ IntelliJ เอ๋อ
+      # สั่งรันบิลด์แบบมาตรฐานสะอาด ๆ ทั่วไปได้เลยครับ
       - name: Build Debug APK
-        env:
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -Djava.awt.headless=true"
         run: gradle assembleDebug -x lint --no-build-cache --no-configuration-cache
         
       - name: Upload APK Artifact
