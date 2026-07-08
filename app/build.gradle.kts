@@ -128,11 +128,3 @@ dependencies {
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
 }
-// บังคับให้ KSP ประมวลผลบนหน่วยความจำหลักโดยตรง ไม่ต้องสร้างกระบวนการย่อยบนคลาวด์
-tasks.withType<com.google.devtools.ksp.gradle.KspAATask>().configureEach {
-    @Suppress("SuspiciousCollectionReassignment")
-    compilerOptions.get().freeCompilerArgs += listOf(
-        "-Djava.awt.headless=true",
-        "-Xmx2g"
-    )
-}
