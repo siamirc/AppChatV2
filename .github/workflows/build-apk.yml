@@ -28,19 +28,11 @@ jobs:
         run: |
           keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
-      # เพิ่มคำสั่งล้างโฟลเดอร์แคชเก่าของ KSP ทิ้งก่อนรัน ป้องกันปัญหา IntelliJ getService เป็น null
-      - name: Clean KSP Cache
-        run: |
-          rm -rf .gradle
-          rm -rf build
-          rm -rf app/.gradle
-          rm -rf app/build
-
-      # บังคับรันแบบ Headless และสั่งคอมไพล์โดยไม่เปิดหน้าต่างจำลองระบบ
+      # แก้ไขบรรทัดนี้: สั่งเปิดสิทธิ์ Headless พร้อมกับกดปิดตัว Configuration Cache (--no-configuration-cache) เพื่อแก้ทาง KSP2
       - name: Build Debug APK
         env:
           JAVA_TOOL_OPTIONS: "-Djava.awt.headless=true"
-        run: gradle assembleDebug -x lint --no-build-cache
+        run: gradle assembleDebug -x lint --no-build-cache --no-configuration-cache
         
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
