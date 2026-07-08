@@ -28,11 +28,11 @@ jobs:
         run: |
           keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
-      # แก้ไขบรรทัดนี้: สั่งเปิดสิทธิ์ Headless พร้อมกับกดปิดตัว Configuration Cache (--no-configuration-cache) เพื่อแก้ทาง KSP2
+      # เพิ่มพารามิเตอร์ล้างหัวเชื้อแคชและสั่งรันแบบไร้ Daemon แยกย่อย
       - name: Build Debug APK
         env:
           JAVA_TOOL_OPTIONS: "-Djava.awt.headless=true"
-        run: gradle assembleDebug -x lint --no-build-cache --no-configuration-cache
+        run: gradle assembleDebug -x lint --no-daemon --no-build-cache --no-configuration-cache --parallel=false
         
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
