@@ -28,11 +28,9 @@ jobs:
         run: |
           keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
-      # แก้ไขบรรทัดนี้: ใส่คำสั่ง -x kspDebugKotlin เพิ่มเข้าไป เพื่อสั่งให้คอมพิวเตอร์ข้ามด่านที่เอ๋อตัวนี้ไปทันที
+      # บิลด์แบบคลีนและปิดระบบแคชตามปกติ
       - name: Build Debug APK
-        env:
-          JAVA_TOOL_OPTIONS: "-Djava.awt.headless=true"
-        run: gradle assembleDebug -x lint -x kspDebugKotlin --no-build-cache --no-configuration-cache
+        run: gradle assembleDebug -x lint --no-build-cache --no-configuration-cache
         
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
