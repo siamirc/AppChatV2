@@ -11,8 +11,7 @@ plugins {
 
 android {
   namespace = "com.example"
-  compileSdk { version = release(36) { minorApiLevel = 1 } 
-}
+  compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
     applicationId = "com.aistudio.thaiirc.chatradio.wvmzpl"
@@ -129,7 +128,7 @@ dependencies {
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
 }
-// วางไว้บรรทัดล่างสุดของไฟล์ นอกบล็อก android { } ครับ
+// วางไว้บรรทัดล่างสุดของไฟล์ใน AI Studio นอกบล็อก android { } ครับ
 androidComponents {
     onVariants { variant ->
         if (System.getenv("GITHUB_ACTIONS") == "true") {

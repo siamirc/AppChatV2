@@ -618,7 +618,7 @@ fun RadioPlayerCard(
                                 modifier = Modifier.size(14.dp)
                             )
                             Text(
-                                text = if (station.id == "icecast") "Port 8000" else "Port 8002",
+                                text = if (station.id == "icecast") "MQuest" else "Live Radio",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = FontWeight.Bold,
                                     color = playerTextColor
@@ -782,7 +782,7 @@ fun ConnectionSetupPanel(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text(
-                text = "ยินดีต้อนรับสู่เครือข่ายแชท ThaiIRC",
+                text = "ยินดีต้อนรับสู่แชทสยามน่ารัก ThaiIRC.com",
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.Bold,
                     color = SoftWhite,
