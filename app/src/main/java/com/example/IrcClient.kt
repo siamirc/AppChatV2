@@ -100,6 +100,11 @@ class IrcClient(private val context: android.content.Context? = null) {
     private val _zncPassword = MutableStateFlow("")
     val zncPassword: StateFlow<String> = _zncPassword.asStateFlow()
 
+    private val _loginPassword = MutableStateFlow("")
+    val loginPassword: StateFlow<String> = _loginPassword.asStateFlow()
+
+    private var lastConnectSaslFailed = false
+
     private val _errorFlow = MutableSharedFlow<String>()
     val errorFlow: SharedFlow<String> = _errorFlow.asSharedFlow()
 
@@ -134,6 +139,7 @@ class IrcClient(private val context: android.content.Context? = null) {
         _serverPassword.value = prefs.getString("server_password", _serverPassword.value) ?: _serverPassword.value
         _saslUsername.value = prefs.getString("sasl_username", _saslUsername.value) ?: _saslUsername.value
         _saslPassword.value = prefs.getString("sasl_password", _saslPassword.value) ?: _saslPassword.value
+        _loginPassword.value = prefs.getString("login_password", _loginPassword.value) ?: _loginPassword.value
         _autoJoinChannels.value = prefs.getString("auto_join_channels", _autoJoinChannels.value) ?: _autoJoinChannels.value
         _rejoinOpenedChannels.value = prefs.getBoolean("rejoin_opened_channels", _rejoinOpenedChannels.value)
         _autoRunCommands.value = prefs.getString("auto_run_commands", _autoRunCommands.value) ?: _autoRunCommands.value
@@ -160,6 +166,7 @@ class IrcClient(private val context: android.content.Context? = null) {
         serverPass: String? = null,
         saslUser: String? = null,
         saslPass: String? = null,
+        loginPass: String? = null,
         autoJoin: String? = null,
         rejoin: Boolean? = null,
         autoRun: String? = null,
@@ -205,6 +212,10 @@ class IrcClient(private val context: android.content.Context? = null) {
             saslPass?.let { 
                 _saslPassword.value = it
                 putString("sasl_password", it) 
+            }
+            loginPass?.let { 
+                _loginPassword.value = it
+                putString("login_password", it) 
             }
             autoJoin?.let { 
                 _autoJoinChannels.value = it
@@ -259,7 +270,7 @@ class IrcClient(private val context: android.content.Context? = null) {
         _currentChannel.value = channel
     }
 
-    fun connect(nick: String, server: String = _serverAddress.value, port: Int = _serverPort.value) {
+    fun connect(nick: String, server: String = _serverAddress.value, port: Int = _serverPort.value, password: String = "") {
         val trimmedNick = nick.trim().replace(" ", "")
         if (trimmedNick.isEmpty()) {
             scope.launch { _errorFlow.emit("กรุณาใส่ชื่อเล่น (Nickname)") }
@@ -272,11 +283,13 @@ class IrcClient(private val context: android.content.Context? = null) {
         lastPort = port
         userRequestedDisconnect = false
         reconnectJob?.cancel()
+        lastConnectSaslFailed = false
 
         if (_connectionState.value == IrcConnectionState.CONNECTED || _connectionState.value == IrcConnectionState.CONNECTING) return
 
         _currentNick.value = trimmedNick
-        saveSettings(nick = trimmedNick, server = server, port = port)
+        _loginPassword.value = password
+        saveSettings(nick = trimmedNick, server = server, port = port, loginPass = password)
         _connectionState.value = IrcConnectionState.CONNECTING
         addSystemMessage("กำลังเชื่อมต่อเซิร์ฟเวอร์ $server:$port...")
 
@@ -312,8 +325,8 @@ class IrcClient(private val context: android.content.Context? = null) {
                     }
                     sendRaw("PASS $zncPass")
                 } else {
-                    // If SASL mode is selected, request sasl capability
-                    if (_authMode.value == "Username with password (SASL)") {
+                    // If SASL mode is selected or a login password is provided, request sasl capability
+                    if (_authMode.value == "Username with password (SASL)" || _loginPassword.value.isNotEmpty()) {
                         sendRaw("CAP REQ :sasl")
                     }
                     
@@ -626,8 +639,8 @@ class IrcClient(private val context: android.content.Context? = null) {
                 }
                 "AUTHENTICATE" -> {
                     if (params.firstOrNull() == "+" || trailing == "+") {
-                        val user = _saslUsername.value
-                        val pass = _saslPassword.value
+                        val user = if (_loginPassword.value.isNotEmpty()) _currentNick.value else _saslUsername.value
+                        val pass = if (_loginPassword.value.isNotEmpty()) _loginPassword.value else _saslPassword.value
                         val authStr = "\u0000$user\u0000$pass"
                         val base64 = android.util.Base64.encodeToString(authStr.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
                         sendRaw("AUTHENTICATE $base64")
@@ -639,11 +652,19 @@ class IrcClient(private val context: android.content.Context? = null) {
                 }
                 "904", "905" -> {
                     addSystemMessage("ยืนยันตัวตน SASL ล้มเหลว")
+                    if (_loginPassword.value.isNotEmpty()) {
+                        lastConnectSaslFailed = true
+                    }
                     sendRaw("CAP END")
                 }
                 "001", "002", "003", "004", "372", "375", "376" -> {
                     addSystemMessage(trailing)
                     if (command == "001") {
+                        if (_loginPassword.value.isNotEmpty() && lastConnectSaslFailed) {
+                            addSystemMessage("เนื่องจากยืนยัน SASL ไม่ผ่าน ระบบจะพยายามทำการลงทะเบียนชื่อเล่นให้ท่านโดยใช้อีเมล์ user@thaiirc.com...")
+                            sendRaw("PRIVMSG NickServ :REGISTER ${_loginPassword.value} user@thaiirc.com")
+                            lastConnectSaslFailed = false
+                        }
                         scope.launch {
                             kotlinx.coroutines.delay(1000)
                             

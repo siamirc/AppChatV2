@@ -43,6 +43,15 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.Dp
@@ -103,14 +112,26 @@ fun IrcRadioApp(viewModel: MainViewModel) {
     val channelUsers by viewModel.ircClient.channelUsers.collectAsStateWithLifecycle()
     val currentNick by viewModel.ircClient.currentNick.collectAsStateWithLifecycle()
     val quitMessage by viewModel.ircClient.quitMessage.collectAsStateWithLifecycle()
+    val loginPassword by viewModel.ircClient.loginPassword.collectAsStateWithLifecycle()
 
     val playbackState by viewModel.radioPlayer.playbackState.collectAsStateWithLifecycle()
     val currentStation by viewModel.radioPlayer.currentStation.collectAsStateWithLifecycle()
     val volume by viewModel.radioPlayer.volume.collectAsStateWithLifecycle()
 
     var nicknameInput by remember { mutableStateOf(currentNick) }
+    var passwordInput by remember { mutableStateOf(loginPassword) }
     var channelInput by remember { mutableStateOf("#thaiirc") }
     var chatMessageInput by remember { mutableStateOf("") }
+
+    LaunchedEffect(currentNick) {
+        if (nicknameInput.isEmpty() || nicknameInput.startsWith("Thai")) {
+            nicknameInput = currentNick
+        }
+    }
+
+    LaunchedEffect(loginPassword) {
+        passwordInput = loginPassword
+    }
 
     val autoJoinChannels by viewModel.ircClient.autoJoinChannels.collectAsStateWithLifecycle()
 
@@ -290,13 +311,15 @@ fun IrcRadioApp(viewModel: MainViewModel) {
                     ConnectionSetupPanel(
                         nickname = nicknameInput,
                         onNicknameChange = { nicknameInput = it },
+                        password = passwordInput,
+                        onPasswordChange = { passwordInput = it },
                         defaultChannel = channelInput,
                         onChannelChange = { channelInput = it },
                         isConnecting = connectionState == IrcConnectionState.CONNECTING,
                         onConnect = {
                             keyboardController?.hide()
                             viewModel.ircClient.updateCurrentChannel(channelInput)
-                            viewModel.ircClient.connect(nicknameInput)
+                            viewModel.ircClient.connect(nicknameInput, password = passwordInput)
                         }
                     )
                 }
@@ -370,7 +393,24 @@ fun IrcRadioApp(viewModel: MainViewModel) {
         UserListDialog(
             channel = currentChannel,
             users = activeChannelUsers,
-            onDismiss = { showUserListDialog = false }
+            onDismiss = { showUserListDialog = false },
+            onUserClick = { user ->
+                var clean = user.trim()
+                while (clean.isNotEmpty() && (clean.startsWith("@") || clean.startsWith("+") || clean.startsWith("%") || clean.startsWith("~") || clean.startsWith("&"))) {
+                    clean = clean.substring(1)
+                }
+                val tag = "@$clean "
+                if (chatMessageInput.isEmpty()) {
+                    chatMessageInput = tag
+                } else {
+                    chatMessageInput = if (chatMessageInput.endsWith(" ")) {
+                        chatMessageInput + tag
+                    } else {
+                        chatMessageInput + " " + tag
+                    }
+                }
+                showUserListDialog = false
+            }
         )
     }
 
@@ -773,11 +813,15 @@ fun EqualizerWaveAnimation(color: Color = NeonCyan) {
 fun ConnectionSetupPanel(
     nickname: String,
     onNicknameChange: (String) -> Unit,
+    password: String,
+    onPasswordChange: (String) -> Unit,
     defaultChannel: String,
     onChannelChange: (String) -> Unit,
     isConnecting: Boolean,
     onConnect: () -> Unit
 ) {
+    var passwordVisible by remember { mutableStateOf(false) }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -818,6 +862,35 @@ fun ConnectionSetupPanel(
                 placeholder = { Text("เช่น Thai1234") },
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null, tint = NeonBlue) },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = NeonBlue,
+                    unfocusedBorderColor = CosmicCardLight,
+                    focusedLabelColor = NeonBlue,
+                    unfocusedLabelColor = MutedGray,
+                    focusedTextColor = SoftWhite,
+                    unfocusedTextColor = SoftWhite,
+                    focusedContainerColor = CosmicBackground,
+                    unfocusedContainerColor = CosmicBackground
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // Password Input (ใต้ช่อง Nickname ตามที่ผู้ใช้ต้องการ)
+            OutlinedTextField(
+                value = password,
+                onValueChange = onPasswordChange,
+                label = { Text("รหัสผ่าน (Password - ถ้ามี)") },
+                placeholder = { Text("ใส่รหัสผ่านเพื่อลงทะเบียน/เข้าระบบ SASL") },
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Filled.Lock, contentDescription = null, tint = NeonBlue) },
+                trailingIcon = {
+                    val image = if (passwordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff
+                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                        Icon(image, contentDescription = null, tint = NeonBlue)
+                    }
+                },
+                visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = NeonBlue,
                     unfocusedBorderColor = CosmicCardLight,
@@ -901,6 +974,24 @@ fun ChatInterfacePanel(
     onDisconnect: () -> Unit
 ) {
     val listState = rememberLazyListState()
+
+    val onTagUser: (String) -> Unit = { user ->
+        var clean = user.trim()
+        while (clean.isNotEmpty() && (clean.startsWith("@") || clean.startsWith("+") || clean.startsWith("%") || clean.startsWith("~") || clean.startsWith("&"))) {
+            clean = clean.substring(1)
+        }
+        val tag = "@$clean "
+        if (chatInput.isEmpty()) {
+            onChatInputChange(tag)
+        } else {
+            val newText = if (chatInput.endsWith(" ")) {
+                chatInput + tag
+            } else {
+                chatInput + " " + tag
+            }
+            onChatInputChange(newText)
+        }
+    }
 
     // Auto-scroll to bottom when new messages arrive
     LaunchedEffect(messages.size) {
@@ -1065,7 +1156,7 @@ fun ChatInterfacePanel(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(messages, key = { it.id }) { msg ->
-                        ChatBubbleItem(msg, currentNick)
+                        ChatBubbleItem(msg, currentNick, onTagUser)
                     }
                 }
             }
@@ -1123,7 +1214,7 @@ fun ChatInterfacePanel(
 }
 
 @Composable
-fun ChatBubbleItem(message: IrcMessage, currentNick: String = "") {
+fun ChatBubbleItem(message: IrcMessage, currentNick: String = "", onTagUser: (String) -> Unit = {}) {
     val formatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val timeString = remember(message.timestamp) { formatter.format(Date(message.timestamp)) }
 
@@ -1135,17 +1226,19 @@ fun ChatBubbleItem(message: IrcMessage, currentNick: String = "") {
                 .padding(vertical = 4.dp),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = "${message.text} ($timeString)",
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontSize = 11.sp,
-                    color = MutedGray,
-                    textAlign = TextAlign.Center
-                ),
-                modifier = Modifier
-                    .background(CosmicCard.copy(alpha = 0.8f), RoundedCornerShape(6.dp))
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            )
+            SelectionContainer {
+                Text(
+                    text = "${message.text} ($timeString)",
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = 11.sp,
+                        color = MutedGray,
+                        textAlign = TextAlign.Center
+                    ),
+                    modifier = Modifier
+                        .background(CosmicCard.copy(alpha = 0.8f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
         }
     } else {
         // Chat dialog messages
@@ -1159,19 +1252,25 @@ fun ChatBubbleItem(message: IrcMessage, currentNick: String = "") {
                     .padding(vertical = 4.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "${message.sender}: ${message.text} ($timeString)",
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        fontSize = 11.sp,
-                        color = MutedGray,
-                        textAlign = TextAlign.Center
-                    ),
-                    modifier = Modifier
-                        .background(CosmicCard.copy(alpha = 0.8f), RoundedCornerShape(6.dp))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                )
+                SelectionContainer {
+                    Text(
+                        text = "${message.sender}: ${message.text} ($timeString)",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 11.sp,
+                            color = MutedGray,
+                            textAlign = TextAlign.Center
+                        ),
+                        modifier = Modifier
+                            .background(CosmicCard.copy(alpha = 0.8f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
             }
         } else {
+            val isMentioned = remember(message.text, currentNick) {
+                currentNick.isNotEmpty() && message.text.contains(currentNick, ignoreCase = true)
+            }
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1186,7 +1285,8 @@ fun ChatBubbleItem(message: IrcMessage, currentNick: String = "") {
                         senderName = senderName,
                         fallbackBgColor = CosmicCardLight,
                         fallbackTextColor = NeonBlue,
-                        fontSize = 11.sp
+                        fontSize = 11.sp,
+                        modifier = Modifier.clickable { onTagUser(senderName) }
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                 }
@@ -1199,10 +1299,13 @@ fun ChatBubbleItem(message: IrcMessage, currentNick: String = "") {
                     RoundedCornerShape(topStart = 0.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
                 }
 
+                val borderStroke = if (isMentioned && !isMe) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF22D3EE)) else null
+
                 Column(
                     modifier = Modifier
                         .widthIn(max = 260.dp)
                         .background(color = bubbleBg, shape = bubbleShape)
+                        .let { if (borderStroke != null) it.border(borderStroke, bubbleShape) else it }
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     // Sender name
@@ -1214,20 +1317,23 @@ fun ChatBubbleItem(message: IrcMessage, currentNick: String = "") {
                                     fontWeight = FontWeight.Bold,
                                     color = NeonBlue,
                                     fontSize = 11.sp
-                                )
+                                ),
+                                modifier = Modifier.clickable { onTagUser(sender) }
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                         }
                     }
 
-                    // Chat text content
-                    Text(
-                        text = message.text,
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            color = SoftWhite,
-                            fontSize = 14.sp
+                    // Chat text content with mIRC colors and SelectionContainer for Copy support
+                    SelectionContainer {
+                        Text(
+                            text = parseMircColors(message.text),
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                color = SoftWhite,
+                                fontSize = 14.sp
+                            )
                         )
-                    )
+                    }
 
                     Spacer(modifier = Modifier.height(4.dp))
 
@@ -1251,7 +1357,8 @@ fun ChatBubbleItem(message: IrcMessage, currentNick: String = "") {
                         senderName = senderName,
                         fallbackBgColor = Color(0xFFD0BCFF),
                         fallbackTextColor = Color(0xFF381E72),
-                        fontSize = 11.sp
+                        fontSize = 11.sp,
+                        modifier = Modifier.clickable { onTagUser(senderName) }
                     )
                 }
             }
@@ -1380,11 +1487,173 @@ fun getNickColor(nick: String): Color {
     return colors[Math.abs(hash) % colors.size]
 }
 
+fun parseMircColors(input: String): AnnotatedString {
+    val builder = AnnotatedString.Builder()
+    var i = 0
+    val n = input.length
+    
+    var boldStart: Int? = null
+    var underlineStart: Int? = null
+    var italicStart: Int? = null
+    var colorStart: Int? = null
+    
+    var currentFg: Color? = null
+    var currentBg: Color? = null
+    
+    val mircColors = mapOf(
+        0 to Color(0xFFFFFFFF), // White
+        1 to Color(0xFFE5E5E5), // Black (Map to very light grey so readable on dark mode)
+        2 to Color(0xFF60A5FA), // Dark Blue -> Light Blue for dark mode
+        3 to Color(0xFF34D399), // Dark Green -> Emerald
+        4 to Color(0xFFF87171), // Red
+        5 to Color(0xFFB91C1C), // Brown/Dark Red
+        6 to Color(0xFFC084FC), // Purple
+        7 to Color(0xFFF59E0B), // Orange
+        8 to Color(0xFFFBBF24), // Yellow
+        9 to Color(0xFF34D399), // Light Green
+        10 to Color(0xFF2DD4BF), // Teal
+        11 to Color(0xFF22D3EE), // Cyan
+        12 to Color(0xFF93C5FD), // Light Blue
+        13 to Color(0xFFF472B6), // Pink
+        14 to Color(0xFF9CA3AF), // Grey
+        15 to Color(0xFFE5E7EB)  // Light Grey
+    )
+    
+    while (i < n) {
+        val char = input[i]
+        when (char) {
+            '\u0002' -> { // Bold
+                if (boldStart != null) {
+                    builder.addStyle(SpanStyle(fontWeight = FontWeight.Bold), boldStart, builder.length)
+                    boldStart = null
+                } else {
+                    boldStart = builder.length
+                }
+                i++
+            }
+            '\u001F' -> { // Underline
+                if (underlineStart != null) {
+                    builder.addStyle(SpanStyle(textDecoration = TextDecoration.Underline), underlineStart, builder.length)
+                    underlineStart = null
+                } else {
+                    underlineStart = builder.length
+                }
+                i++
+            }
+            '\u001D', '\u0016' -> { // Italic
+                if (italicStart != null) {
+                    builder.addStyle(SpanStyle(fontStyle = FontStyle.Italic), italicStart, builder.length)
+                    italicStart = null
+                } else {
+                    italicStart = builder.length
+                }
+                i++
+            }
+            '\u0003' -> { // Color
+                if (colorStart != null) {
+                    val fg = currentFg ?: Color.Unspecified
+                    val bg = currentBg ?: Color.Unspecified
+                    if (fg != Color.Unspecified || bg != Color.Unspecified) {
+                        builder.addStyle(SpanStyle(color = fg, background = bg), colorStart, builder.length)
+                    }
+                    colorStart = null
+                }
+                
+                i++ // skip \u0003
+                
+                // Read fg color code (up to 2 digits)
+                var fgStr = ""
+                while (i < n && input[i].isDigit() && fgStr.length < 2) {
+                    fgStr += input[i]
+                    i++
+                }
+                
+                if (fgStr.isNotEmpty()) {
+                    val fgCode = fgStr.toIntOrNull() ?: -1
+                    currentFg = mircColors[fgCode]
+                    
+                    // Check for background color separated by comma
+                    if (i < n && input[i] == ',') {
+                        i++ // skip ','
+                        var bgStr = ""
+                        while (i < n && input[i].isDigit() && bgStr.length < 2) {
+                            bgStr += input[i]
+                            i++
+                        }
+                        if (bgStr.isNotEmpty()) {
+                            val bgCode = bgStr.toIntOrNull() ?: -1
+                            currentBg = mircColors[bgCode]
+                        } else {
+                            currentBg = null
+                        }
+                    } else {
+                        currentBg = null
+                    }
+                    colorStart = builder.length
+                } else {
+                    currentFg = null
+                    currentBg = null
+                }
+            }
+            '\u000F' -> { // Reset all
+                if (boldStart != null) {
+                    builder.addStyle(SpanStyle(fontWeight = FontWeight.Bold), boldStart, builder.length)
+                    boldStart = null
+                }
+                if (underlineStart != null) {
+                    builder.addStyle(SpanStyle(textDecoration = TextDecoration.Underline), underlineStart, builder.length)
+                    underlineStart = null
+                }
+                if (italicStart != null) {
+                    builder.addStyle(SpanStyle(fontStyle = FontStyle.Italic), italicStart, builder.length)
+                    italicStart = null
+                }
+                if (colorStart != null) {
+                    val fg = currentFg ?: Color.Unspecified
+                    val bg = currentBg ?: Color.Unspecified
+                    if (fg != Color.Unspecified || bg != Color.Unspecified) {
+                        builder.addStyle(SpanStyle(color = fg, background = bg), colorStart, builder.length)
+                    }
+                    colorStart = null
+                }
+                currentFg = null
+                currentBg = null
+                i++
+            }
+            else -> {
+                builder.append(char)
+                i++
+            }
+        }
+    }
+    
+    // Close any open spans at the end
+    if (boldStart != null) {
+        builder.addStyle(SpanStyle(fontWeight = FontWeight.Bold), boldStart, builder.length)
+    }
+    if (underlineStart != null) {
+        builder.addStyle(SpanStyle(textDecoration = TextDecoration.Underline), underlineStart, builder.length)
+    }
+    if (italicStart != null) {
+        builder.addStyle(SpanStyle(fontStyle = FontStyle.Italic), italicStart, builder.length)
+    }
+    if (colorStart != null) {
+        val fg = currentFg ?: Color.Unspecified
+        val bg = currentBg ?: Color.Unspecified
+        if (fg != Color.Unspecified || bg != Color.Unspecified) {
+            builder.addStyle(SpanStyle(color = fg, background = bg), colorStart, builder.length)
+        }
+    }
+    
+    return builder.toAnnotatedString()
+}
+
 @Composable
 fun UserListDialog(
     channel: String,
     users: Set<String>,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onUserClick: (String) -> Unit = {}
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1418,7 +1687,9 @@ fun UserListDialog(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(CosmicCardLight.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(CosmicCardLight.copy(alpha = 0.5f))
+                                    .clickable { onUserClick(user) }
                                     .padding(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
