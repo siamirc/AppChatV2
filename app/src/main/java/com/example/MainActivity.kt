@@ -104,6 +104,15 @@ fun IrcRadioApp(viewModel: MainViewModel) {
     var channelInput by remember { mutableStateOf("#thaiirc") }
     var chatMessageInput by remember { mutableStateOf("") }
 
+    val autoJoinChannels by viewModel.ircClient.autoJoinChannels.collectAsStateWithLifecycle()
+
+    LaunchedEffect(autoJoinChannels) {
+        val firstAutoJoin = autoJoinChannels.split(",").firstOrNull { it.trim().isNotEmpty() }?.trim()
+        if (firstAutoJoin != null) {
+            channelInput = if (firstAutoJoin.startsWith("#")) firstAutoJoin else "#$firstAutoJoin"
+        }
+    }
+
     var showUserListDialog by remember { mutableStateOf(false) }
     var showJoinChannelDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -371,14 +380,7 @@ fun IrcRadioApp(viewModel: MainViewModel) {
     // Dialog: App Settings / About
     if (showSettingsDialog) {
         SettingsDialog(
-            currentNick = currentNick,
-            currentQuitMessage = quitMessage,
-            onUpdateNick = {
-                viewModel.ircClient.updateNick(it)
-            },
-            onUpdateQuitMessage = {
-                viewModel.ircClient.updateQuitMessage(it)
-            },
+            ircClient = viewModel.ircClient,
             onDismiss = { showSettingsDialog = false }
         )
     }
@@ -1172,7 +1174,7 @@ fun ChatBubbleItem(message: IrcMessage, currentNick: String = "") {
                 // Left avatar (Received)
                 if (!isMe) {
                     val senderName = message.sender ?: "?"
-                    val initial = senderName.take(1).uppercase()
+                    val initial = getFirstGrapheme(senderName)
                     Box(
                         modifier = Modifier
                             .size(32.dp)
@@ -1256,7 +1258,7 @@ fun ChatBubbleItem(message: IrcMessage, currentNick: String = "") {
                         contentAlignment = Alignment.Center
                     ) {
                         val senderName = message.sender ?: "M"
-                        val initial = senderName.take(1).uppercase()
+                        val initial = getFirstGrapheme(senderName)
                         Text(
                             text = initial,
                             style = MaterialTheme.typography.labelSmall.copy(
@@ -1269,6 +1271,17 @@ fun ChatBubbleItem(message: IrcMessage, currentNick: String = "") {
                 }
             }
         }
+    }
+}
+
+// Safe helper to extract the first grapheme (supporting surrogate pairs/emojis)
+fun getFirstGrapheme(name: String): String {
+    if (name.isEmpty()) return "?"
+    return try {
+        val codePoint = name.codePointAt(0)
+        String(Character.toChars(codePoint)).uppercase()
+    } catch (e: Exception) {
+        name.take(1).uppercase()
     }
 }
 
@@ -1339,7 +1352,7 @@ fun UserListDialog(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
-                                        text = user.take(1).uppercase(),
+                                        text = getFirstGrapheme(user),
                                         fontWeight = FontWeight.Bold,
                                         color = CosmicBackground,
                                         fontSize = 12.sp
@@ -1425,14 +1438,34 @@ fun JoinChannelDialog(
 
 @Composable
 fun SettingsDialog(
-    currentNick: String,
-    currentQuitMessage: String,
-    onUpdateNick: (String) -> Unit,
-    onUpdateQuitMessage: (String) -> Unit,
+    ircClient: IrcClient,
     onDismiss: () -> Unit
 ) {
+    val currentNick by ircClient.currentNick.collectAsStateWithLifecycle()
+    val currentQuitMessage by ircClient.quitMessage.collectAsStateWithLifecycle()
+    val serverAddress by ircClient.serverAddress.collectAsStateWithLifecycle()
+    val serverPort by ircClient.serverPort.collectAsStateWithLifecycle()
+    val useSsl by ircClient.useSsl.collectAsStateWithLifecycle()
+    val authMode by ircClient.authMode.collectAsStateWithLifecycle()
+    val serverPassword by ircClient.serverPassword.collectAsStateWithLifecycle()
+    val saslUsername by ircClient.saslUsername.collectAsStateWithLifecycle()
+    val saslPassword by ircClient.saslPassword.collectAsStateWithLifecycle()
+    val autoJoinChannels by ircClient.autoJoinChannels.collectAsStateWithLifecycle()
+    val rejoinOpenedChannels by ircClient.rejoinOpenedChannels.collectAsStateWithLifecycle()
+    val autoRunCommands by ircClient.autoRunCommands.collectAsStateWithLifecycle()
+
     var nickInput by remember { mutableStateOf(currentNick) }
     var quitMessageInput by remember { mutableStateOf(currentQuitMessage) }
+    var serverAddressInput by remember { mutableStateOf(serverAddress) }
+    var serverPortInput by remember { mutableStateOf(serverPort.toString()) }
+    var useSslInput by remember { mutableStateOf(useSsl) }
+    var authModeInput by remember { mutableStateOf(authMode) }
+    var serverPasswordInput by remember { mutableStateOf(serverPassword) }
+    var saslUsernameInput by remember { mutableStateOf(saslUsername) }
+    var saslPasswordInput by remember { mutableStateOf(saslPassword) }
+    var autoJoinChannelsInput by remember { mutableStateOf(autoJoinChannels) }
+    var rejoinOpenedChannelsInput by remember { mutableStateOf(rejoinOpenedChannels) }
+    var autoRunCommandsInput by remember { mutableStateOf(autoRunCommands) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1446,13 +1479,19 @@ fun SettingsDialog(
         },
         text = {
             Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 450.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Nickname field
+                // Section 1: Profile Settings
+                Text("ข้อมูลโปรไฟล์", color = NeonCyan, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+
                 OutlinedTextField(
                     value = nickInput,
                     onValueChange = { nickInput = it },
-                    label = { Text("เปลี่ยนชื่อเล่นใหม่ (NICK)") },
+                    label = { Text("ชื่อเล่นใหม่ (NICK)") },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = NeonBlue,
@@ -1465,11 +1504,10 @@ fun SettingsDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // Quit message field
                 OutlinedTextField(
                     value = quitMessageInput,
                     onValueChange = { quitMessageInput = it },
-                    label = { Text("ข้อความ Quit Message") },
+                    label = { Text("Quit Message") },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = NeonBlue,
@@ -1482,19 +1520,239 @@ fun SettingsDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Text(
-                    text = "ระบบจะใช้ Quit Message นี้เมื่อกดตัดการเชื่อมต่อจากแชท",
-                    style = MaterialTheme.typography.bodySmall.copy(color = MutedGray)
+                // Section 2: Server Settings
+                Text("เซิร์ฟเวอร์", color = NeonCyan, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = serverAddressInput,
+                        onValueChange = { serverAddressInput = it },
+                        label = { Text("Server Address") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NeonBlue,
+                            unfocusedBorderColor = CosmicCardLight,
+                            focusedTextColor = SoftWhite,
+                            unfocusedTextColor = SoftWhite,
+                            focusedLabelColor = NeonBlue,
+                            unfocusedLabelColor = MutedGray
+                        ),
+                        modifier = Modifier.weight(0.65f)
+                    )
+
+                    OutlinedTextField(
+                        value = serverPortInput,
+                        onValueChange = { serverPortInput = it },
+                        label = { Text("Port") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NeonBlue,
+                            unfocusedBorderColor = CosmicCardLight,
+                            focusedTextColor = SoftWhite,
+                            unfocusedTextColor = SoftWhite,
+                            focusedLabelColor = NeonBlue,
+                            unfocusedLabelColor = MutedGray
+                        ),
+                        modifier = Modifier.weight(0.35f)
+                    )
+                }
+
+                // Checkbox SSL
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { useSslInput = !useSslInput }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = useSslInput,
+                        onCheckedChange = { useSslInput = it },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = NeonBlue,
+                            uncheckedColor = MutedGray,
+                            checkmarkColor = CosmicBackground
+                        )
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("เชื่อมต่อแบบปลอดภัย (SSL / TLS)", color = SoftWhite, style = MaterialTheme.typography.bodyMedium)
+                }
+
+                // Section 3: Authentication Mode
+                Text("โหมดยืนยันตัวตน (Authentication)", color = NeonCyan, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+
+                val authModes = listOf("None", "Server password", "Username with password (SASL)")
+                authModes.forEach { mode ->
+                    val modeText = when (mode) {
+                        "None" -> "ไม่ยืนยันตัวตน (None)"
+                        "Server password" -> "รหัสผ่านเซิร์ฟเวอร์ (Server password)"
+                        "Username with password (SASL)" -> "SASL (Username & Password)"
+                        else -> mode
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { authModeInput = mode }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = authModeInput == mode,
+                            onClick = { authModeInput = mode },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = NeonBlue,
+                                unselectedColor = MutedGray
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(modeText, color = SoftWhite, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+
+                if (authModeInput == "Server password") {
+                    OutlinedTextField(
+                        value = serverPasswordInput,
+                        onValueChange = { serverPasswordInput = it },
+                        label = { Text("รหัสผ่านเซิร์ฟเวอร์ (Server Password)") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NeonBlue,
+                            unfocusedBorderColor = CosmicCardLight,
+                            focusedTextColor = SoftWhite,
+                            unfocusedTextColor = SoftWhite,
+                            focusedLabelColor = NeonBlue,
+                            unfocusedLabelColor = MutedGray
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                if (authModeInput == "Username with password (SASL)") {
+                    OutlinedTextField(
+                        value = saslUsernameInput,
+                        onValueChange = { saslUsernameInput = it },
+                        label = { Text("SASL Username") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NeonBlue,
+                            unfocusedBorderColor = CosmicCardLight,
+                            focusedTextColor = SoftWhite,
+                            unfocusedTextColor = SoftWhite,
+                            focusedLabelColor = NeonBlue,
+                            unfocusedLabelColor = MutedGray
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = saslPasswordInput,
+                        onValueChange = { saslPasswordInput = it },
+                        label = { Text("SASL Password") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NeonBlue,
+                            unfocusedBorderColor = CosmicCardLight,
+                            focusedTextColor = SoftWhite,
+                            unfocusedTextColor = SoftWhite,
+                            focusedLabelColor = NeonBlue,
+                            unfocusedLabelColor = MutedGray
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                // Section 4: Auto-Join Channels
+                Text("ห้องแชทอัตโนมัติ (Auto-Join Channels)", color = NeonCyan, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+
+                OutlinedTextField(
+                    value = autoJoinChannelsInput,
+                    onValueChange = { autoJoinChannelsInput = it },
+                    label = { Text("ห้องที่เข้าอัตโนมัติ (คั่นด้วยจุลภาค ,)") },
+                    placeholder = { Text("เช่น #thaiirc,#siam") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = NeonBlue,
+                        unfocusedBorderColor = CosmicCardLight,
+                        focusedTextColor = SoftWhite,
+                        unfocusedTextColor = SoftWhite,
+                        focusedLabelColor = NeonBlue,
+                        unfocusedLabelColor = MutedGray
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Checkbox Rejoin
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { rejoinOpenedChannelsInput = !rejoinOpenedChannelsInput }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = rejoinOpenedChannelsInput,
+                        onCheckedChange = { rejoinOpenedChannelsInput = it },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = NeonBlue,
+                            uncheckedColor = MutedGray,
+                            checkmarkColor = CosmicBackground
+                        )
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("เชื่อมต่อห้องเดิมที่เปิดค้างไว้ล่าสุด (Rejoin)", color = SoftWhite, style = MaterialTheme.typography.bodyMedium)
+                }
+
+                // Section 5: Auto-Run Commands
+                Text("คำสั่งรันอัตโนมัติ (Auto-Run Commands)", color = NeonCyan, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+
+                OutlinedTextField(
+                    value = autoRunCommandsInput,
+                    onValueChange = { autoRunCommandsInput = it },
+                    label = { Text("คำสั่งรันอัตโนมัติ (1 คำสั่งต่อ 1 บรรทัด)") },
+                    placeholder = { Text("เช่น /msg NickServ identify 123456") },
+                    singleLine = false,
+                    maxLines = 4,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = NeonBlue,
+                        unfocusedBorderColor = CosmicCardLight,
+                        focusedTextColor = SoftWhite,
+                        unfocusedTextColor = SoftWhite,
+                        focusedLabelColor = NeonBlue,
+                        unfocusedLabelColor = MutedGray
+                    ),
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    if (nickInput.trim().isNotEmpty()) {
-                        onUpdateNick(nickInput.trim())
+                    val portNum = serverPortInput.toIntOrNull() ?: 6667
+                    ircClient.saveSettings(
+                        nick = nickInput.trim(),
+                        quitMsg = quitMessageInput.trim(),
+                        server = serverAddressInput.trim(),
+                        port = portNum,
+                        ssl = useSslInput,
+                        auth = authModeInput,
+                        serverPass = serverPasswordInput.trim(),
+                        saslUser = saslUsernameInput.trim(),
+                        saslPass = saslPasswordInput.trim(),
+                        autoJoin = autoJoinChannelsInput.trim(),
+                        rejoin = rejoinOpenedChannelsInput,
+                        autoRun = autoRunCommandsInput.trim()
+                    )
+                    
+                    if (nickInput.trim() != currentNick && nickInput.trim().isNotEmpty()) {
+                        ircClient.updateNick(nickInput.trim())
                     }
-                    onUpdateQuitMessage(quitMessageInput.trim())
+                    if (quitMessageInput.trim() != currentQuitMessage) {
+                        ircClient.updateQuitMessage(quitMessageInput.trim())
+                    }
+
                     onDismiss()
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = NeonBlue)

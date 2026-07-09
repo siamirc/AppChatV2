@@ -35,7 +35,7 @@ data class IrcMessage(
     val timestamp: Long = System.currentTimeMillis()
 )
 
-class IrcClient {
+class IrcClient(private val context: android.content.Context? = null) {
     private val _connectionState = MutableStateFlow(IrcConnectionState.DISCONNECTED)
     val connectionState: StateFlow<IrcConnectionState> = _connectionState.asStateFlow()
 
@@ -54,8 +54,39 @@ class IrcClient {
     private val _currentNick = MutableStateFlow("Thai${(1000..9999).random()}")
     val currentNick: StateFlow<String> = _currentNick.asStateFlow()
 
-    private val _quitMessage = MutableStateFlow("Quit: app.thaiirc.com - live radio v2.0.1")
+    private val _quitMessage = MutableStateFlow("Quit: app.thaiirc.com - live radio v3.0")
     val quitMessage: StateFlow<String> = _quitMessage.asStateFlow()
+
+    // Configurable connection settings
+    private val _serverAddress = MutableStateFlow("irc.thaiirc.com")
+    val serverAddress: StateFlow<String> = _serverAddress.asStateFlow()
+
+    private val _serverPort = MutableStateFlow(6667)
+    val serverPort: StateFlow<Int> = _serverPort.asStateFlow()
+
+    private val _useSsl = MutableStateFlow(false)
+    val useSsl: StateFlow<Boolean> = _useSsl.asStateFlow()
+
+    private val _authMode = MutableStateFlow("None") // "None", "Server password", "Username with password (SASL)"
+    val authMode: StateFlow<String> = _authMode.asStateFlow()
+
+    private val _serverPassword = MutableStateFlow("")
+    val serverPassword: StateFlow<String> = _serverPassword.asStateFlow()
+
+    private val _saslUsername = MutableStateFlow("")
+    val saslUsername: StateFlow<String> = _saslUsername.asStateFlow()
+
+    private val _saslPassword = MutableStateFlow("")
+    val saslPassword: StateFlow<String> = _saslPassword.asStateFlow()
+
+    private val _autoJoinChannels = MutableStateFlow("#thaiirc")
+    val autoJoinChannels: StateFlow<String> = _autoJoinChannels.asStateFlow()
+
+    private val _rejoinOpenedChannels = MutableStateFlow(true)
+    val rejoinOpenedChannels: StateFlow<Boolean> = _rejoinOpenedChannels.asStateFlow()
+
+    private val _autoRunCommands = MutableStateFlow("")
+    val autoRunCommands: StateFlow<String> = _autoRunCommands.asStateFlow()
 
     private val _errorFlow = MutableSharedFlow<String>()
     val errorFlow: SharedFlow<String> = _errorFlow.asSharedFlow()
@@ -76,6 +107,100 @@ class IrcClient {
     // We changed the encoding back to UTF-8 as requested by the user
     private val thaiCharset: Charset = java.nio.charset.StandardCharsets.UTF_8
 
+    init {
+        loadSettings()
+    }
+
+    private fun loadSettings() {
+        val prefs = context?.getSharedPreferences("thaiirc_prefs", android.content.Context.MODE_PRIVATE) ?: return
+        _currentNick.value = prefs.getString("nick", _currentNick.value) ?: _currentNick.value
+        _quitMessage.value = prefs.getString("quit_message", _quitMessage.value) ?: _quitMessage.value
+        _serverAddress.value = prefs.getString("server_address", _serverAddress.value) ?: _serverAddress.value
+        _serverPort.value = prefs.getInt("server_port", _serverPort.value)
+        _useSsl.value = prefs.getBoolean("use_ssl", _useSsl.value)
+        _authMode.value = prefs.getString("auth_mode", _authMode.value) ?: _authMode.value
+        _serverPassword.value = prefs.getString("server_password", _serverPassword.value) ?: _serverPassword.value
+        _saslUsername.value = prefs.getString("sasl_username", _saslUsername.value) ?: _saslUsername.value
+        _saslPassword.value = prefs.getString("sasl_password", _saslPassword.value) ?: _saslPassword.value
+        _autoJoinChannels.value = prefs.getString("auto_join_channels", _autoJoinChannels.value) ?: _autoJoinChannels.value
+        _rejoinOpenedChannels.value = prefs.getBoolean("rejoin_opened_channels", _rejoinOpenedChannels.value)
+        _autoRunCommands.value = prefs.getString("auto_run_commands", _autoRunCommands.value) ?: _autoRunCommands.value
+        
+        // Update current channel to match auto join or default
+        val firstAutoJoin = _autoJoinChannels.value.split(",").firstOrNull { it.trim().isNotEmpty() }?.trim()
+        if (firstAutoJoin != null) {
+            _currentChannel.value = if (firstAutoJoin.startsWith("#")) firstAutoJoin else "#$firstAutoJoin"
+        }
+    }
+
+    fun saveSettings(
+        nick: String? = null,
+        quitMsg: String? = null,
+        server: String? = null,
+        port: Int? = null,
+        ssl: Boolean? = null,
+        auth: String? = null,
+        serverPass: String? = null,
+        saslUser: String? = null,
+        saslPass: String? = null,
+        autoJoin: String? = null,
+        rejoin: Boolean? = null,
+        autoRun: String? = null
+    ) {
+        val prefs = context?.getSharedPreferences("thaiirc_prefs", android.content.Context.MODE_PRIVATE) ?: return
+        with(prefs.edit()) {
+            nick?.let { 
+                _currentNick.value = it
+                putString("nick", it) 
+            }
+            quitMsg?.let { 
+                _quitMessage.value = it
+                putString("quit_message", it) 
+            }
+            server?.let { 
+                _serverAddress.value = it
+                putString("server_address", it) 
+            }
+            port?.let { 
+                _serverPort.value = it
+                putInt("server_port", it) 
+            }
+            ssl?.let { 
+                _useSsl.value = it
+                putBoolean("use_ssl", it) 
+            }
+            auth?.let { 
+                _authMode.value = it
+                putString("auth_mode", it) 
+            }
+            serverPass?.let { 
+                _serverPassword.value = it
+                putString("server_password", it) 
+            }
+            saslUser?.let { 
+                _saslUsername.value = it
+                putString("sasl_username", it) 
+            }
+            saslPass?.let { 
+                _saslPassword.value = it
+                putString("sasl_password", it) 
+            }
+            autoJoin?.let { 
+                _autoJoinChannels.value = it
+                putString("auto_join_channels", it) 
+            }
+            rejoin?.let { 
+                _rejoinOpenedChannels.value = it
+                putBoolean("rejoin_opened_channels", it) 
+            }
+            autoRun?.let { 
+                _autoRunCommands.value = it
+                putString("auto_run_commands", it) 
+            }
+            apply()
+        }
+    }
+
     fun updateNick(newNick: String) {
         val trimmed = newNick.trim().replace(" ", "")
         if (trimmed.isNotEmpty()) {
@@ -83,19 +208,21 @@ class IrcClient {
                 sendRaw("NICK $trimmed")
             } else {
                 _currentNick.value = trimmed
+                saveSettings(nick = trimmed)
             }
         }
     }
 
     fun updateQuitMessage(newMsg: String) {
         _quitMessage.value = newMsg
+        saveSettings(quitMsg = newMsg)
     }
 
     fun updateCurrentChannel(channel: String) {
         _currentChannel.value = channel
     }
 
-    fun connect(nick: String, server: String = "irc.thaiirc.com", port: Int = 6667) {
+    fun connect(nick: String, server: String = _serverAddress.value, port: Int = _serverPort.value) {
         val trimmedNick = nick.trim().replace(" ", "")
         if (trimmedNick.isEmpty()) {
             scope.launch { _errorFlow.emit("กรุณาใส่ชื่อเล่น (Nickname)") }
@@ -112,12 +239,17 @@ class IrcClient {
         if (_connectionState.value == IrcConnectionState.CONNECTED || _connectionState.value == IrcConnectionState.CONNECTING) return
 
         _currentNick.value = trimmedNick
+        saveSettings(nick = trimmedNick, server = server, port = port)
         _connectionState.value = IrcConnectionState.CONNECTING
         addSystemMessage("กำลังเชื่อมต่อเซิร์ฟเวอร์ $server:$port...")
 
         connectionJob = scope.launch {
             try {
-                val s = Socket(server, port)
+                val s = if (_useSsl.value) {
+                    javax.net.ssl.SSLSocketFactory.getDefault().createSocket(server, port)
+                } else {
+                    Socket(server, port)
+                }
                 s.keepAlive = true // Enable keep alive to keep background connection stable
                 s.tcpNoDelay = true
                 socket = s
@@ -129,6 +261,17 @@ class IrcClient {
 
                 // Send handshake
                 val ident = "Thai${(1000..9999).random()}"
+                
+                // If SASL mode is selected, request sasl capability
+                if (_authMode.value == "Username with password (SASL)") {
+                    sendRaw("CAP REQ :sasl")
+                }
+                
+                // Send PASS if server password mode is selected
+                if (_authMode.value == "Server password" && _serverPassword.value.isNotEmpty()) {
+                    sendRaw("PASS ${_serverPassword.value}")
+                }
+
                 sendRaw("NICK $trimmedNick")
                 sendRaw("USER $ident 0 * :ThaiIRC Client App")
 
@@ -425,13 +568,88 @@ class IrcClient {
                 "366" -> {
                     // End of NAMES list.
                 }
+                "CAP" -> {
+                    if (params.size >= 2 && params[1].uppercase() == "ACK" && trailing.contains("sasl")) {
+                        sendRaw("AUTHENTICATE PLAIN")
+                    }
+                }
+                "AUTHENTICATE" -> {
+                    if (params.firstOrNull() == "+" || trailing == "+") {
+                        val user = _saslUsername.value
+                        val pass = _saslPassword.value
+                        val authStr = "\u0000$user\u0000$pass"
+                        val base64 = android.util.Base64.encodeToString(authStr.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+                        sendRaw("AUTHENTICATE $base64")
+                    }
+                }
+                "903" -> {
+                    addSystemMessage("ยืนยันตัวตน SASL สำเร็จ")
+                    sendRaw("CAP END")
+                }
+                "904", "905" -> {
+                    addSystemMessage("ยืนยันตัวตน SASL ล้มเหลว")
+                    sendRaw("CAP END")
+                }
                 "001", "002", "003", "004", "372", "375", "376" -> {
                     addSystemMessage(trailing)
                     if (command == "001") {
-                        // Auto-join default room
                         scope.launch {
                             kotlinx.coroutines.delay(1000)
-                            sendRaw("JOIN ${_currentChannel.value}")
+                            
+                            // Collect channels to join
+                            val channelsToJoin = mutableSetOf<String>()
+                            
+                            // 1. Configured auto-join channels
+                            if (_autoJoinChannels.value.isNotEmpty()) {
+                                _autoJoinChannels.value.split(",")
+                                    .map { it.trim() }
+                                    .filter { it.isNotEmpty() }
+                                    .forEach {
+                                        val chan = if (it.startsWith("#")) it else "#$it"
+                                        channelsToJoin.add(chan)
+                                    }
+                            }
+
+                            // 2. Also ensure current channel (entered on login screen) is added
+                            if (_currentChannel.value.isNotEmpty()) {
+                                channelsToJoin.add(_currentChannel.value)
+                            }
+                            
+                            // 3. Previously joined channels (rejoin)
+                            if (_rejoinOpenedChannels.value) {
+                                _joinedChannels.value.filter { it.isNotEmpty() }.forEach {
+                                    channelsToJoin.add(it)
+                                }
+                            }
+                            
+                            // Fallback if empty
+                            if (channelsToJoin.isEmpty()) {
+                                channelsToJoin.add("#thaiirc")
+                            }
+                            
+                            // Set current channel to the first one in the list
+                            val firstChan = channelsToJoin.first()
+                            _currentChannel.value = firstChan
+                            
+                            // Join all channels
+                            channelsToJoin.forEach { chan ->
+                                sendRaw("JOIN $chan")
+                            }
+                            
+                            // 3. Auto-run commands
+                            if (_autoRunCommands.value.isNotEmpty()) {
+                                kotlinx.coroutines.delay(1000) // Delay slightly to let JOIN complete
+                                _autoRunCommands.value.split("\n")
+                                    .map { it.trim() }
+                                    .filter { it.isNotEmpty() }
+                                    .forEach { cmd ->
+                                        if (cmd.startsWith("/")) {
+                                            handleCommand(cmd)
+                                        } else {
+                                            sendRaw(cmd)
+                                        }
+                                    }
+                            }
                         }
                     }
                 }

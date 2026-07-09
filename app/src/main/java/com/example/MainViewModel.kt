@@ -5,7 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import kotlinx.coroutines.flow.StateFlow
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
-    val ircClient = IrcClient()
+    val ircClient = IrcClient(application)
     val radioPlayer = RadioPlayerManager(application)
 
     init {
