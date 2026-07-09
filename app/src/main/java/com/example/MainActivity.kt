@@ -1454,6 +1454,11 @@ fun SettingsDialog(
     val rejoinOpenedChannels by ircClient.rejoinOpenedChannels.collectAsStateWithLifecycle()
     val autoRunCommands by ircClient.autoRunCommands.collectAsStateWithLifecycle()
 
+    val useZnc by ircClient.useZnc.collectAsStateWithLifecycle()
+    val zncUsername by ircClient.zncUsername.collectAsStateWithLifecycle()
+    val zncNetwork by ircClient.zncNetwork.collectAsStateWithLifecycle()
+    val zncPassword by ircClient.zncPassword.collectAsStateWithLifecycle()
+
     var nickInput by remember { mutableStateOf(currentNick) }
     var quitMessageInput by remember { mutableStateOf(currentQuitMessage) }
     var serverAddressInput by remember { mutableStateOf(serverAddress) }
@@ -1466,6 +1471,11 @@ fun SettingsDialog(
     var autoJoinChannelsInput by remember { mutableStateOf(autoJoinChannels) }
     var rejoinOpenedChannelsInput by remember { mutableStateOf(rejoinOpenedChannels) }
     var autoRunCommandsInput by remember { mutableStateOf(autoRunCommands) }
+
+    var useZncInput by remember { mutableStateOf(useZnc) }
+    var zncUsernameInput by remember { mutableStateOf(zncUsername) }
+    var zncNetworkInput by remember { mutableStateOf(zncNetwork) }
+    var zncPasswordInput by remember { mutableStateOf(zncPassword) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1664,6 +1674,80 @@ fun SettingsDialog(
                     )
                 }
 
+                // Section 3.5: ZNC Bouncer Settings
+                Text("ตั้งค่า ZNC Bouncer", color = NeonCyan, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { useZncInput = !useZncInput }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = useZncInput,
+                        onCheckedChange = { useZncInput = it },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = NeonBlue,
+                            uncheckedColor = MutedGray,
+                            checkmarkColor = CosmicBackground
+                        )
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("ใช้งานผ่าน ZNC Bouncer", color = SoftWhite, style = MaterialTheme.typography.bodyMedium)
+                }
+
+                if (useZncInput) {
+                    OutlinedTextField(
+                        value = zncUsernameInput,
+                        onValueChange = { zncUsernameInput = it },
+                        label = { Text("ZNC Username") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NeonBlue,
+                            unfocusedBorderColor = CosmicCardLight,
+                            focusedTextColor = SoftWhite,
+                            unfocusedTextColor = SoftWhite,
+                            focusedLabelColor = NeonBlue,
+                            unfocusedLabelColor = MutedGray
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = zncNetworkInput,
+                        onValueChange = { zncNetworkInput = it },
+                        label = { Text("ZNC Network (ไม่จำเป็นต้องใส่)") },
+                        placeholder = { Text("เช่น thaiirc") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NeonBlue,
+                            unfocusedBorderColor = CosmicCardLight,
+                            focusedTextColor = SoftWhite,
+                            unfocusedTextColor = SoftWhite,
+                            focusedLabelColor = NeonBlue,
+                            unfocusedLabelColor = MutedGray
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = zncPasswordInput,
+                        onValueChange = { zncPasswordInput = it },
+                        label = { Text("ZNC Password") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NeonBlue,
+                            unfocusedBorderColor = CosmicCardLight,
+                            focusedTextColor = SoftWhite,
+                            unfocusedTextColor = SoftWhite,
+                            focusedLabelColor = NeonBlue,
+                            unfocusedLabelColor = MutedGray
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
                 // Section 4: Auto-Join Channels
                 Text("ห้องแชทอัตโนมัติ (Auto-Join Channels)", color = NeonCyan, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
 
@@ -1743,7 +1827,11 @@ fun SettingsDialog(
                         saslPass = saslPasswordInput.trim(),
                         autoJoin = autoJoinChannelsInput.trim(),
                         rejoin = rejoinOpenedChannelsInput,
-                        autoRun = autoRunCommandsInput.trim()
+                        autoRun = autoRunCommandsInput.trim(),
+                        useZncVal = useZncInput,
+                        zncUser = zncUsernameInput.trim(),
+                        zncNet = zncNetworkInput.trim(),
+                        zncPass = zncPasswordInput.trim()
                     )
                     
                     if (nickInput.trim() != currentNick && nickInput.trim().isNotEmpty()) {

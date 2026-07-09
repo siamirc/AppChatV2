@@ -88,6 +88,18 @@ class IrcClient(private val context: android.content.Context? = null) {
     private val _autoRunCommands = MutableStateFlow("")
     val autoRunCommands: StateFlow<String> = _autoRunCommands.asStateFlow()
 
+    private val _useZnc = MutableStateFlow(false)
+    val useZnc: StateFlow<Boolean> = _useZnc.asStateFlow()
+
+    private val _zncUsername = MutableStateFlow("")
+    val zncUsername: StateFlow<String> = _zncUsername.asStateFlow()
+
+    private val _zncNetwork = MutableStateFlow("")
+    val zncNetwork: StateFlow<String> = _zncNetwork.asStateFlow()
+
+    private val _zncPassword = MutableStateFlow("")
+    val zncPassword: StateFlow<String> = _zncPassword.asStateFlow()
+
     private val _errorFlow = MutableSharedFlow<String>()
     val errorFlow: SharedFlow<String> = _errorFlow.asSharedFlow()
 
@@ -126,6 +138,11 @@ class IrcClient(private val context: android.content.Context? = null) {
         _rejoinOpenedChannels.value = prefs.getBoolean("rejoin_opened_channels", _rejoinOpenedChannels.value)
         _autoRunCommands.value = prefs.getString("auto_run_commands", _autoRunCommands.value) ?: _autoRunCommands.value
         
+        _useZnc.value = prefs.getBoolean("use_znc", _useZnc.value)
+        _zncUsername.value = prefs.getString("znc_username", _zncUsername.value) ?: _zncUsername.value
+        _zncNetwork.value = prefs.getString("znc_network", _zncNetwork.value) ?: _zncNetwork.value
+        _zncPassword.value = prefs.getString("znc_password", _zncPassword.value) ?: _zncPassword.value
+
         // Update current channel to match auto join or default
         val firstAutoJoin = _autoJoinChannels.value.split(",").firstOrNull { it.trim().isNotEmpty() }?.trim()
         if (firstAutoJoin != null) {
@@ -145,7 +162,11 @@ class IrcClient(private val context: android.content.Context? = null) {
         saslPass: String? = null,
         autoJoin: String? = null,
         rejoin: Boolean? = null,
-        autoRun: String? = null
+        autoRun: String? = null,
+        useZncVal: Boolean? = null,
+        zncUser: String? = null,
+        zncNet: String? = null,
+        zncPass: String? = null
     ) {
         val prefs = context?.getSharedPreferences("thaiirc_prefs", android.content.Context.MODE_PRIVATE) ?: return
         with(prefs.edit()) {
@@ -196,6 +217,22 @@ class IrcClient(private val context: android.content.Context? = null) {
             autoRun?.let { 
                 _autoRunCommands.value = it
                 putString("auto_run_commands", it) 
+            }
+            useZncVal?.let {
+                _useZnc.value = it
+                putBoolean("use_znc", it)
+            }
+            zncUser?.let {
+                _zncUsername.value = it
+                putString("znc_username", it)
+            }
+            zncNet?.let {
+                _zncNetwork.value = it
+                putString("znc_network", it)
+            }
+            zncPass?.let {
+                _zncPassword.value = it
+                putString("znc_password", it)
             }
             apply()
         }
@@ -262,14 +299,28 @@ class IrcClient(private val context: android.content.Context? = null) {
                 // Send handshake
                 val ident = "Thai${(1000..9999).random()}"
                 
-                // If SASL mode is selected, request sasl capability
-                if (_authMode.value == "Username with password (SASL)") {
-                    sendRaw("CAP REQ :sasl")
-                }
-                
-                // Send PASS if server password mode is selected
-                if (_authMode.value == "Server password" && _serverPassword.value.isNotEmpty()) {
-                    sendRaw("PASS ${_serverPassword.value}")
+                // If ZNC is enabled, send PASS formatted as username[/network]:password
+                if (_useZnc.value && _zncUsername.value.isNotEmpty()) {
+                    val zncPass = buildString {
+                        append(_zncUsername.value.trim())
+                        if (_zncNetwork.value.trim().isNotEmpty()) {
+                            append("/")
+                            append(_zncNetwork.value.trim())
+                        }
+                        append(":")
+                        append(_zncPassword.value.trim())
+                    }
+                    sendRaw("PASS $zncPass")
+                } else {
+                    // If SASL mode is selected, request sasl capability
+                    if (_authMode.value == "Username with password (SASL)") {
+                        sendRaw("CAP REQ :sasl")
+                    }
+                    
+                    // Send PASS if server password mode is selected
+                    if (_authMode.value == "Server password" && _serverPassword.value.isNotEmpty()) {
+                        sendRaw("PASS ${_serverPassword.value}")
+                    }
                 }
 
                 sendRaw("NICK $trimmedNick")
