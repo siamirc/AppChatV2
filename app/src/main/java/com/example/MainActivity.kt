@@ -45,6 +45,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.theme.MyApplicationTheme
@@ -53,6 +55,12 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import coil.compose.SubcomposeAsyncImage
+import coil.compose.SubcomposeAsyncImageContent
+import coil.compose.AsyncImagePainter
+import coil.ImageLoader
+import coil.decode.ImageDecoderDecoder
+import coil.decode.GifDecoder
 
 // Custom modern color scheme constants ("Sophisticated Dark" theme)
 val CosmicBackground = Color(0xFF1C1B1F) // Deep obsidian black (#1C1B1F)
@@ -1174,24 +1182,12 @@ fun ChatBubbleItem(message: IrcMessage, currentNick: String = "") {
                 // Left avatar (Received)
                 if (!isMe) {
                     val senderName = message.sender ?: "?"
-                    val initial = getFirstGrapheme(senderName)
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(CosmicCardLight)
-                            .border(1.dp, MutedGray.copy(alpha = 0.2f), CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = initial,
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = NeonBlue,
-                                fontSize = 11.sp
-                            )
-                        )
-                    }
+                    AvatarView(
+                        senderName = senderName,
+                        fallbackBgColor = CosmicCardLight,
+                        fallbackTextColor = NeonBlue,
+                        fontSize = 11.sp
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
                 }
 
@@ -1250,26 +1246,108 @@ fun ChatBubbleItem(message: IrcMessage, currentNick: String = "") {
                 // Right avatar (Sent)
                 if (isMe) {
                     Spacer(modifier = Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFD0BCFF)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val senderName = message.sender ?: "M"
-                        val initial = getFirstGrapheme(senderName)
-                        Text(
-                            text = initial,
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF381E72),
-                                fontSize = 11.sp
-                            )
-                        )
-                    }
+                    val senderName = message.sender ?: "M"
+                    AvatarView(
+                        senderName = senderName,
+                        fallbackBgColor = Color(0xFFD0BCFF),
+                        fallbackTextColor = Color(0xFF381E72),
+                        fontSize = 11.sp
+                    )
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun AvatarView(
+    senderName: String,
+    modifier: Modifier = Modifier,
+    size: Dp = 32.dp,
+    fallbackBgColor: Color = CosmicCardLight,
+    fallbackTextColor: Color = NeonBlue,
+    fontSize: TextUnit = 11.sp
+) {
+    val context = LocalContext.current
+    val cleanNick = remember(senderName) {
+        var clean = senderName.trim()
+        while (clean.isNotEmpty() && (clean.startsWith("@") || clean.startsWith("+") || clean.startsWith("%") || clean.startsWith("~") || clean.startsWith("&"))) {
+            clean = clean.substring(1)
+        }
+        clean
+    }
+    
+    val avatarUrl = remember(cleanNick) {
+        if (cleanNick.isNotEmpty()) {
+            "https://www.thaiirc.com/avatars/${cleanNick.lowercase()}.gif"
+        } else {
+            ""
+        }
+    }
+
+    val imageLoader = remember {
+        ImageLoader.Builder(context)
+            .components {
+                if (Build.VERSION.SDK_INT >= 28) {
+                    add(ImageDecoderDecoder.Factory())
+                } else {
+                    add(GifDecoder.Factory())
+                }
+            }
+            .build()
+    }
+
+    val initial = remember(senderName) { getFirstGrapheme(senderName) }
+
+    if (avatarUrl.isNotEmpty()) {
+        SubcomposeAsyncImage(
+            model = avatarUrl,
+            imageLoader = imageLoader,
+            contentDescription = senderName,
+            modifier = modifier
+                .size(size)
+                .clip(CircleShape)
+                .background(fallbackBgColor)
+                .border(1.dp, MutedGray.copy(alpha = 0.2f), CircleShape),
+            contentScale = ContentScale.Crop
+        ) {
+            val state = painter.state
+            if (state is AsyncImagePainter.State.Success) {
+                SubcomposeAsyncImageContent()
+            } else {
+                // Error, empty or loading (show initials as fallback)
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = initial,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = fallbackTextColor,
+                            fontSize = fontSize
+                        )
+                    )
+                }
+            }
+        }
+    } else {
+        Box(
+            modifier = modifier
+                .size(size)
+                .clip(CircleShape)
+                .background(fallbackBgColor)
+                .border(1.dp, MutedGray.copy(alpha = 0.2f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = initial,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = fallbackTextColor,
+                    fontSize = fontSize
+                )
+            )
         }
     }
 }
@@ -1344,20 +1422,13 @@ fun UserListDialog(
                                     .padding(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(28.dp)
-                                        .clip(CircleShape)
-                                        .background(getNickColor(user)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = getFirstGrapheme(user),
-                                        fontWeight = FontWeight.Bold,
-                                        color = CosmicBackground,
-                                        fontSize = 12.sp
-                                    )
-                                }
+                                AvatarView(
+                                    senderName = user,
+                                    size = 28.dp,
+                                    fallbackBgColor = getNickColor(user),
+                                    fallbackTextColor = CosmicBackground,
+                                    fontSize = 12.sp
+                                )
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
                                     text = user,
