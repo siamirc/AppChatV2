@@ -54,7 +54,7 @@ class IrcClient(private val context: android.content.Context? = null) {
     private val _currentNick = MutableStateFlow("Thai${(1000..9999).random()}")
     val currentNick: StateFlow<String> = _currentNick.asStateFlow()
 
-    private val _quitMessage = MutableStateFlow("Quit: app.thaiirc.com - live radio v3.0")
+    private val _quitMessage = MutableStateFlow("Quit: app.thaiirc.com - live radio v5.0")
     val quitMessage: StateFlow<String> = _quitMessage.asStateFlow()
 
     // Configurable connection settings

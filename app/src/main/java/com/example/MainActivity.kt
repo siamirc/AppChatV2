@@ -47,6 +47,8 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -1071,7 +1073,9 @@ fun ChatInterfacePanel(
         ) {
             // Joined channels list
             Row(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 joinedChannels.forEach { chan ->
@@ -1645,7 +1649,50 @@ fun parseMircColors(input: String): AnnotatedString {
         }
     }
     
-    return builder.toAnnotatedString()
+    val result = builder.toAnnotatedString()
+    val plainText = result.text
+    val urlPattern = "(https?://[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}[a-zA-Z0-9/._?#=&+%-]*)|(www\\.[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}[a-zA-Z0-9/._?#=&+%-]*)".toRegex(RegexOption.IGNORE_CASE)
+    
+    val finalBuilder = AnnotatedString.Builder(result)
+    val matches = urlPattern.findAll(plainText)
+    for (match in matches) {
+        val start = match.range.first
+        val end = match.range.last + 1
+        val rawUrl = match.value
+        val destinationUrl = if (rawUrl.lowercase().startsWith("http")) rawUrl else "http://$rawUrl"
+        
+        try {
+            finalBuilder.addLink(
+                url = LinkAnnotation.Url(
+                    url = destinationUrl,
+                    styles = TextLinkStyles(
+                        style = SpanStyle(
+                            color = Color(0xFF22D3EE),
+                            textDecoration = TextDecoration.Underline
+                        )
+                    )
+                ),
+                start = start,
+                end = end
+            )
+        } catch (e: Throwable) {
+            finalBuilder.addStringAnnotation(
+                tag = "URL",
+                annotation = destinationUrl,
+                start = start,
+                end = end
+            )
+            finalBuilder.addStyle(
+                style = SpanStyle(
+                    color = Color(0xFF22D3EE),
+                    textDecoration = TextDecoration.Underline
+                ),
+                start = start,
+                end = end
+            )
+        }
+    }
+    return finalBuilder.toAnnotatedString()
 }
 
 @Composable
