@@ -151,6 +151,7 @@ fun IrcRadioApp(viewModel: MainViewModel) {
     }
 
     val autoJoinChannels by viewModel.ircClient.autoJoinChannels.collectAsStateWithLifecycle()
+    val mentionNotificationEnabled by viewModel.ircClient.mentionNotificationEnabled.collectAsStateWithLifecycle()
 
     LaunchedEffect(autoJoinChannels) {
         val firstAutoJoin = autoJoinChannels.split(",").firstOrNull { it.trim().isNotEmpty() }?.trim()
@@ -359,6 +360,46 @@ fun IrcRadioApp(viewModel: MainViewModel) {
                     // Status Badge
                     ConnectionStatusBadge(connectionState)
                     
+                    val notifyPermissionLauncher = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.RequestPermission()
+                    ) { isGranted ->
+                        if (isGranted) {
+                            viewModel.ircClient.saveSettings(mentionNotificationEnabledVal = true)
+                            Toast.makeText(context, "เปิดการแจ้งเตือนสำเร็จ", Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.ircClient.saveSettings(mentionNotificationEnabledVal = false)
+                            Toast.makeText(context, "กรุณาอนุญาตการแจ้งเตือนเพื่อรับการแจ้งเตือนการแท็กชื่อ", Toast.LENGTH_LONG).show()
+                        }
+                    }
+
+                    IconButton(
+                        onClick = {
+                            val nextVal = !mentionNotificationEnabled
+                            if (nextVal && android.os.Build.VERSION.SDK_INT >= 33) {
+                                if (androidx.core.content.ContextCompat.checkSelfPermission(
+                                        context,
+                                        android.Manifest.permission.POST_NOTIFICATIONS
+                                    ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    notifyPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                                } else {
+                                    viewModel.ircClient.saveSettings(mentionNotificationEnabledVal = true)
+                                    Toast.makeText(context, "เปิดการแจ้งเตือนการแท็กชื่อ", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                viewModel.ircClient.saveSettings(mentionNotificationEnabledVal = nextVal)
+                                val msgText = if (nextVal) "เปิดการแจ้งเตือนการแท็กชื่อ" else "ปิดการแจ้งเตือนการแท็กชื่อ"
+                                Toast.makeText(context, msgText, Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = if (mentionNotificationEnabled) Icons.Filled.Notifications else Icons.Filled.NotificationsOff,
+                            contentDescription = "แจ้งเตือนการแท็กชื่อ",
+                            tint = if (mentionNotificationEnabled) NeonBlue else MutedGray
+                        )
+                    }
+
                     IconButton(onClick = { showSettingsDialog = true }) {
                         Icon(Icons.Filled.Settings, contentDescription = "ตั้งค่า", tint = SoftWhite)
                     }
@@ -2093,6 +2134,7 @@ fun SettingsDialog(
     val autoJoinChannels by ircClient.autoJoinChannels.collectAsStateWithLifecycle()
     val rejoinOpenedChannels by ircClient.rejoinOpenedChannels.collectAsStateWithLifecycle()
     val autoRunCommands by ircClient.autoRunCommands.collectAsStateWithLifecycle()
+    val mentionNotificationEnabled by ircClient.mentionNotificationEnabled.collectAsStateWithLifecycle()
 
     val useZnc by ircClient.useZnc.collectAsStateWithLifecycle()
     val zncUsername by ircClient.zncUsername.collectAsStateWithLifecycle()
@@ -2111,6 +2153,7 @@ fun SettingsDialog(
     var autoJoinChannelsInput by remember { mutableStateOf(autoJoinChannels) }
     var rejoinOpenedChannelsInput by remember { mutableStateOf(rejoinOpenedChannels) }
     var autoRunCommandsInput by remember { mutableStateOf(autoRunCommands) }
+    var mentionNotificationEnabledInput by remember { mutableStateOf(mentionNotificationEnabled) }
 
     var useZncInput by remember { mutableStateOf(useZnc) }
     var zncUsernameInput by remember { mutableStateOf(zncUsername) }
@@ -2449,6 +2492,64 @@ fun SettingsDialog(
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                // Section 6: Notification Settings
+                Text("การแจ้งเตือน (Notifications)", color = NeonCyan, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+
+                val context = LocalContext.current
+                val notificationPermissionLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.RequestPermission()
+                ) { isGranted ->
+                    if (isGranted) {
+                        Toast.makeText(context, "เปิดการแจ้งเตือนสำเร็จ", Toast.LENGTH_SHORT).show()
+                    } else {
+                        mentionNotificationEnabledInput = false
+                        Toast.makeText(context, "กรุณาอนุญาตการแจ้งเตือนในระบบเพื่อรับการแท็กชื่อ", Toast.LENGTH_LONG).show()
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            val nextValue = !mentionNotificationEnabledInput
+                            if (nextValue && android.os.Build.VERSION.SDK_INT >= 33) {
+                                if (androidx.core.content.ContextCompat.checkSelfPermission(
+                                        context,
+                                        android.Manifest.permission.POST_NOTIFICATIONS
+                                    ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                            }
+                            mentionNotificationEnabledInput = nextValue
+                        }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = mentionNotificationEnabledInput,
+                        onCheckedChange = { nextValue ->
+                            if (nextValue && android.os.Build.VERSION.SDK_INT >= 33) {
+                                if (androidx.core.content.ContextCompat.checkSelfPermission(
+                                        context,
+                                        android.Manifest.permission.POST_NOTIFICATIONS
+                                    ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                            }
+                            mentionNotificationEnabledInput = nextValue
+                        },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = NeonBlue,
+                            uncheckedColor = MutedGray,
+                            checkmarkColor = CosmicBackground
+                        )
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("แจ้งเตือนเมื่อมีคนแท็กชื่อเรา หรือส่งข้อความส่วนตัว", color = SoftWhite, style = MaterialTheme.typography.bodyMedium)
+                }
             }
         },
         confirmButton = {
@@ -2471,7 +2572,8 @@ fun SettingsDialog(
                         useZncVal = useZncInput,
                         zncUser = zncUsernameInput.trim(),
                         zncNet = zncNetworkInput.trim(),
-                        zncPass = zncPasswordInput.trim()
+                        zncPass = zncPasswordInput.trim(),
+                        mentionNotificationEnabledVal = mentionNotificationEnabledInput
                     )
                     
                     if (nickInput.trim() != currentNick && nickInput.trim().isNotEmpty()) {

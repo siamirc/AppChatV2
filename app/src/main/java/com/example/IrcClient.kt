@@ -103,6 +103,9 @@ class IrcClient(private val context: android.content.Context? = null) {
     private val _loginPassword = MutableStateFlow("")
     val loginPassword: StateFlow<String> = _loginPassword.asStateFlow()
 
+    private val _mentionNotificationEnabled = MutableStateFlow(true)
+    val mentionNotificationEnabled: StateFlow<Boolean> = _mentionNotificationEnabled.asStateFlow()
+
     private var lastConnectSaslFailed = false
 
     private val _errorFlow = MutableSharedFlow<String>()
@@ -148,6 +151,7 @@ class IrcClient(private val context: android.content.Context? = null) {
         _zncUsername.value = prefs.getString("znc_username", _zncUsername.value) ?: _zncUsername.value
         _zncNetwork.value = prefs.getString("znc_network", _zncNetwork.value) ?: _zncNetwork.value
         _zncPassword.value = prefs.getString("znc_password", _zncPassword.value) ?: _zncPassword.value
+        _mentionNotificationEnabled.value = prefs.getBoolean("mention_notification_enabled", _mentionNotificationEnabled.value)
 
         // Update current channel to match auto join or default
         val firstAutoJoin = _autoJoinChannels.value.split(",").firstOrNull { it.trim().isNotEmpty() }?.trim()
@@ -173,7 +177,8 @@ class IrcClient(private val context: android.content.Context? = null) {
         useZncVal: Boolean? = null,
         zncUser: String? = null,
         zncNet: String? = null,
-        zncPass: String? = null
+        zncPass: String? = null,
+        mentionNotificationEnabledVal: Boolean? = null
     ) {
         val prefs = context?.getSharedPreferences("thaiirc_prefs", android.content.Context.MODE_PRIVATE) ?: return
         with(prefs.edit()) {
@@ -244,6 +249,10 @@ class IrcClient(private val context: android.content.Context? = null) {
             zncPass?.let {
                 _zncPassword.value = it
                 putString("znc_password", it)
+            }
+            mentionNotificationEnabledVal?.let {
+                _mentionNotificationEnabled.value = it
+                putBoolean("mention_notification_enabled", it)
             }
             apply()
         }
@@ -569,6 +578,17 @@ class IrcClient(private val context: android.content.Context? = null) {
                     val dispText = if (isAction) "$senderNick $messageText" else messageText
 
                     addMessage(IrcMessage(sender = dispSender, target = target, text = dispText))
+
+                    // Trigger tag notification
+                    if (senderNick != _currentNick.value) {
+                        val currentNickName = _currentNick.value
+                        val isMention = messageText.contains(currentNickName, ignoreCase = true)
+                        val isPrivateMessage = target.isNotEmpty() && !target.startsWith("#") && target == currentNickName
+                        if (isMention || isPrivateMessage) {
+                            val notifyTarget = if (isPrivateMessage) senderNick else target
+                            showNotification(senderNick, messageText, notifyTarget)
+                        }
+                    }
                 }
                 "JOIN" -> {
                     val channel = if (trailing.isNotEmpty()) trailing else (if (params.isNotEmpty()) params[0] else "")
@@ -776,5 +796,59 @@ class IrcClient(private val context: android.content.Context? = null) {
         val currentMap = _channelUsers.value.toMutableMap()
         currentMap[channel] = users
         _channelUsers.value = currentMap
+    }
+
+    private fun createNotificationChannel() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val ctx = context ?: return
+            val name = "IRC Mention Notification"
+            val descriptionText = "แจ้งเตือนเมื่อมีผู้พูดถึงหรือแท็กชื่อเล่นของคุณในห้องแชท"
+            val importance = android.app.NotificationManager.IMPORTANCE_DEFAULT
+            val channel = android.app.NotificationChannel("irc_mention_channel", name, importance).apply {
+                description = descriptionText
+            }
+            val notificationManager: android.app.NotificationManager =
+                ctx.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    fun showNotification(sender: String, messageText: String, target: String) {
+        val ctx = context ?: return
+        if (!_mentionNotificationEnabled.value) return
+
+        createNotificationChannel()
+
+        val intent = android.content.Intent(ctx, MainActivity::class.java).apply {
+            flags = android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pendingIntent = android.app.PendingIntent.getActivity(
+            ctx, 
+            0, 
+            intent, 
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val builder = androidx.core.app.NotificationCompat.Builder(ctx, "irc_mention_channel")
+            .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setContentTitle("คุณถูกแท็กในห้อง $target")
+            .setContentText("$sender: $messageText")
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+
+        val notificationManager = androidx.core.app.NotificationManagerCompat.from(ctx)
+        try {
+            if (android.os.Build.VERSION.SDK_INT < 33 || 
+                androidx.core.content.ContextCompat.checkSelfPermission(
+                    ctx, 
+                    android.Manifest.permission.POST_NOTIFICATIONS
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                notificationManager.notify(System.currentTimeMillis().toInt(), builder.build())
+            }
+        } catch (e: SecurityException) {
+            Log.e("IrcClient", "SecurityException showing notification", e)
+        }
     }
 }
