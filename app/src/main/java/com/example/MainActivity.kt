@@ -63,6 +63,14 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
+import android.content.Context
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -100,6 +108,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+data class UpdateInfo(
+    val versionCode: Int,
+    val versionName: String,
+    val apkUrl: String,
+    val changeLog: String
+)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -149,6 +164,115 @@ fun IrcRadioApp(viewModel: MainViewModel) {
     var showSettingsDialog by remember { mutableStateOf(false) }
     
     var currentTab by remember { mutableStateOf(AppTab.CHAT) }
+
+    // File Upload States
+    var isUploading by remember { mutableStateOf(false) }
+    var uploadProgress by remember { mutableStateOf(0f) }
+    var uploadError by remember { mutableStateOf<String?>(null) }
+    var uploadedUrl by remember { mutableStateOf<String?>(null) }
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch {
+                isUploading = true
+                uploadProgress = 0f
+                uploadError = null
+                uploadedUrl = null
+                
+                val resultUrl = withContext(Dispatchers.IO) {
+                    try {
+                        FileUploader.uploadFile(context, uri) { progress ->
+                            uploadProgress = progress
+                        }
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+                
+                isUploading = false
+                if (resultUrl != null) {
+                    uploadedUrl = resultUrl
+                    // Copy to clipboard
+                    try {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        val clip = android.content.ClipData.newPlainText("Uploaded File Link", resultUrl)
+                        clipboard.setPrimaryClip(clip)
+                    } catch (e: Exception) {
+                        // ignore clipboard errors
+                    }
+                    
+                    // Add to chat input
+                    chatMessageInput = if (chatMessageInput.isEmpty()) {
+                        resultUrl
+                    } else {
+                        "$chatMessageInput $resultUrl"
+                    }
+                    
+                    Toast.makeText(context, "อัปโหลดเสร็จแล้ว! ลิงก์ถูกนำไปใส่ในช่องแชทและคัดลอกลงคลิปบอร์ดแล้ว", Toast.LENGTH_LONG).show()
+                } else {
+                    uploadError = "อัปโหลดล้มเหลว กรุณาลองใหม่อีกครั้ง"
+                    Toast.makeText(context, "อัปโหลดล้มเหลว", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    // Auto Update States
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            try {
+                val url = URL("https://app.thaiirc.com/update.json")
+                val connection = url.openConnection() as HttpURLConnection
+                connection.connectTimeout = 5000
+                connection.readTimeout = 5000
+                if (connection.responseCode == HttpURLConnection.HTTP_OK) {
+                    val jsonText = connection.inputStream.bufferedReader().use { it.readText() }
+                    
+                    val versionCodePattern = "\"versionCode\"\\s*:\\s*(\\d+)".toRegex()
+                    val versionNamePattern = "\"versionName\"\\s*:\\s*\"([^\"]+)\"".toRegex()
+                    val apkUrlPattern = "\"apkUrl\"\\s*:\\s*\"([^\"]+)\"".toRegex()
+                    val changeLogPattern = "\"changeLog\"\\s*:\\s*\"([^\"]+)\"".toRegex()
+                    
+                    val vcMatch = versionCodePattern.find(jsonText)
+                    val vnMatch = versionNamePattern.find(jsonText)
+                    val apkMatch = apkUrlPattern.find(jsonText)
+                    val clMatch = changeLogPattern.find(jsonText)
+                    
+                    if (vcMatch != null && vnMatch != null && apkMatch != null) {
+                        val remoteVersionCode = vcMatch.groupValues[1].toInt()
+                        val remoteVersionName = vnMatch.groupValues[1]
+                        val remoteApkUrl = apkMatch.groupValues[1]
+                        val remoteChangeLog = clMatch?.groupValues[1] ?: ""
+                        
+                        val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+                        val currentVersionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            packageInfo.longVersionCode
+                        } else {
+                            @Suppress("DEPRECATION")
+                            packageInfo.versionCode.toLong()
+                        }
+                        
+                        if (remoteVersionCode > currentVersionCode) {
+                            updateInfo = UpdateInfo(
+                                versionCode = remoteVersionCode,
+                                versionName = remoteVersionName,
+                                apkUrl = remoteApkUrl,
+                                changeLog = remoteChangeLog
+                            )
+                            showUpdateDialog = true
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
 
     LaunchedEffect(connectionState) {
         if (connectionState == IrcConnectionState.CONNECTED) {
@@ -263,6 +387,19 @@ fun IrcRadioApp(viewModel: MainViewModel) {
                             indicatorColor = NeonBlue,
                             unselectedIconColor = MutedGray,
                             unselectedTextColor = MutedGray
+                        )
+                    )
+                    NavigationBarItem(
+                        selected = false,
+                        onClick = { filePickerLauncher.launch("*/*") },
+                        icon = { Icon(Icons.Filled.CloudUpload, contentDescription = "ส่งไฟล์/รูป", tint = NeonBlue) },
+                        label = { Text("ส่งไฟล์/รูป") },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = CosmicBackground,
+                            selectedTextColor = NeonBlue,
+                            indicatorColor = NeonBlue,
+                            unselectedIconColor = NeonBlue,
+                            unselectedTextColor = SoftWhite
                         )
                     )
                     NavigationBarItem(
@@ -432,6 +569,120 @@ fun IrcRadioApp(viewModel: MainViewModel) {
         SettingsDialog(
             ircClient = viewModel.ircClient,
             onDismiss = { showSettingsDialog = false }
+        )
+    }
+
+    // Dialog: App Update Alert
+    if (showUpdateDialog && updateInfo != null) {
+        AlertDialog(
+            onDismissRequest = { showUpdateDialog = false },
+            containerColor = CosmicCard,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Filled.SystemUpdate,
+                        contentDescription = null,
+                        tint = NeonBlue,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "พบเวอร์ชันใหม่ (${updateInfo!!.versionName})",
+                        color = SoftWhite,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp
+                    )
+                }
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "กรุณาอัปเดตแอปพลิเคชันเป็นเวอร์ชันล่าสุดเพื่อการใช้งานที่ราบรื่นและฟีเจอร์ใหม่ๆ",
+                        color = SoftWhite,
+                        fontSize = 14.sp
+                    )
+                    if (updateInfo!!.changeLog.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "มีอะไรใหม่ในเวอร์ชันนี้:",
+                            color = NeonBlue,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = updateInfo!!.changeLog,
+                            color = MutedGray,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showUpdateDialog = false
+                        try {
+                            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(updateInfo!!.apkUrl))
+                            context.startActivity(browserIntent)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "ไม่สามารถเปิดเบราว์เซอร์ได้", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NeonBlue)
+                ) {
+                    Text("อัปเดตทันที", color = CosmicBackground, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showUpdateDialog = false }
+                ) {
+                    Text("ภายหลัง", color = MutedGray)
+                }
+            }
+        )
+    }
+
+    // Dialog: File Uploading Progress
+    if (isUploading) {
+        AlertDialog(
+            onDismissRequest = {}, // Prevent closing by outside clicks
+            containerColor = CosmicCard,
+            confirmButton = {},
+            title = {
+                Text(
+                    text = "กำลังอัปโหลดรูปภาพ/ไฟล์",
+                    color = SoftWhite,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    CircularProgressIndicator(
+                        progress = uploadProgress,
+                        color = NeonBlue,
+                        modifier = Modifier.size(64.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "อัปโหลดแล้ว ${(uploadProgress * 100).toInt()}%",
+                        color = NeonBlue,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "กรุณารอสักครู่...",
+                        color = MutedGray,
+                        fontSize = 13.sp
+                    )
+                }
+            }
         )
     }
 }

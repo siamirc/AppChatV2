@@ -45,7 +45,7 @@ class IrcClient(private val context: android.content.Context? = null) {
     private val _currentChannel = MutableStateFlow("#thaiirc")
     val currentChannel: StateFlow<String> = _currentChannel.asStateFlow()
 
-    private val _joinedChannels = MutableStateFlow<Set<String>>(setOf("#thaiirc"))
+    private val _joinedChannels = MutableStateFlow<Set<String>>(emptySet())
     val joinedChannels: StateFlow<Set<String>> = _joinedChannels.asStateFlow()
 
     private val _channelUsers = MutableStateFlow<Map<String, Set<String>>>(emptyMap()) // Channel -> Users set
@@ -54,7 +54,7 @@ class IrcClient(private val context: android.content.Context? = null) {
     private val _currentNick = MutableStateFlow("Thai${(1000..9999).random()}")
     val currentNick: StateFlow<String> = _currentNick.asStateFlow()
 
-    private val _quitMessage = MutableStateFlow("Quit: app.thaiirc.com - live radio v5.0")
+    private val _quitMessage = MutableStateFlow("Quit: app.thaiirc.com - live radio V6.0")
     val quitMessage: StateFlow<String> = _quitMessage.asStateFlow()
 
     // Configurable connection settings
@@ -79,7 +79,7 @@ class IrcClient(private val context: android.content.Context? = null) {
     private val _saslPassword = MutableStateFlow("")
     val saslPassword: StateFlow<String> = _saslPassword.asStateFlow()
 
-    private val _autoJoinChannels = MutableStateFlow("#thaiirc")
+    private val _autoJoinChannels = MutableStateFlow("")
     val autoJoinChannels: StateFlow<String> = _autoJoinChannels.asStateFlow()
 
     private val _rejoinOpenedChannels = MutableStateFlow(true)
@@ -310,7 +310,18 @@ class IrcClient(private val context: android.content.Context? = null) {
                 addSystemMessage("เชื่อมต่อสำเร็จ! กำลังยืนยันตัวตนด้วยชื่อเล่น $trimmedNick...")
 
                 // Send handshake
-                val ident = "Thai${(1000..9999).random()}"
+                val ident = buildString {
+                    append("app")
+                    val poolDigits = listOf('0', '1')
+                    val poolChars = listOf('a', 'b', 'c', 'd', 'e', 'f')
+                    for (i in 0 until 7) {
+                        if (i % 2 == 0) {
+                            append(poolDigits.random())
+                        } else {
+                            append(poolChars.random())
+                        }
+                    }
+                }
                 
                 // If ZNC is enabled, send PASS formatted as username[/network]:password
                 if (_useZnc.value && _zncUsername.value.isNotEmpty()) {
@@ -694,18 +705,18 @@ class IrcClient(private val context: android.content.Context? = null) {
                                 }
                             }
                             
-                            // Fallback if empty
-                            if (channelsToJoin.isEmpty()) {
-                                channelsToJoin.add("#thaiirc")
-                            }
-                            
-                            // Set current channel to the first one in the list
-                            val firstChan = channelsToJoin.first()
-                            _currentChannel.value = firstChan
-                            
-                            // Join all channels
-                            channelsToJoin.forEach { chan ->
-                                sendRaw("JOIN $chan")
+                            // No forced fallback to #thaiirc if empty. We support empty channel connections!
+                            if (channelsToJoin.isNotEmpty()) {
+                                // Set current channel to the first one in the list
+                                val firstChan = channelsToJoin.first()
+                                _currentChannel.value = firstChan
+                                
+                                // Join all channels
+                                channelsToJoin.forEach { chan ->
+                                    sendRaw("JOIN $chan")
+                                }
+                            } else {
+                                _currentChannel.value = ""
                             }
                             
                             // 3. Auto-run commands
