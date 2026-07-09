@@ -54,7 +54,7 @@ class IrcClient {
     private val _currentNick = MutableStateFlow("Thai${(1000..9999).random()}")
     val currentNick: StateFlow<String> = _currentNick.asStateFlow()
 
-    private val _quitMessage = MutableStateFlow("Quit: app.thaiirc.com - live radio v2.0")
+    private val _quitMessage = MutableStateFlow("Quit: app.thaiirc.com - live radio v2.0.1")
     val quitMessage: StateFlow<String> = _quitMessage.asStateFlow()
 
     private val _errorFlow = MutableSharedFlow<String>()
