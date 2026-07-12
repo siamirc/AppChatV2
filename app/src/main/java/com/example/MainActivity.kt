@@ -31,6 +31,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
@@ -163,6 +167,10 @@ fun IrcRadioApp(viewModel: MainViewModel) {
     var showUserListDialog by remember { mutableStateOf(false) }
     var showJoinChannelDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var showChannelListDialog by remember { mutableStateOf(false) }
+    var showUserActionsDialog by remember { mutableStateOf(false) }
+    var selectedUserForActions by remember { mutableStateOf("") }
+    val chatInputFocusRequester = remember { FocusRequester() }
     
     var currentTab by remember { mutableStateOf(AppTab.CHAT) }
 
@@ -400,6 +408,19 @@ fun IrcRadioApp(viewModel: MainViewModel) {
                         )
                     }
 
+                    IconButton(
+                        onClick = { 
+                            viewModel.ircClient.fetchChannelList()
+                            showChannelListDialog = true 
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.ListAlt,
+                            contentDescription = "รายชื่อห้องแชททั้งหมด",
+                            tint = NeonCyan
+                        )
+                    }
+
                     IconButton(onClick = { showSettingsDialog = true }) {
                         Icon(Icons.Filled.Settings, contentDescription = "ตั้งค่า", tint = SoftWhite)
                     }
@@ -422,6 +443,19 @@ fun IrcRadioApp(viewModel: MainViewModel) {
                         onClick = { currentTab = AppTab.CHAT },
                         icon = { Icon(Icons.Filled.Chat, contentDescription = "ห้องแชท") },
                         label = { Text("ห้องแชท") },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = CosmicBackground,
+                            selectedTextColor = NeonBlue,
+                            indicatorColor = NeonBlue,
+                            unselectedIconColor = MutedGray,
+                            unselectedTextColor = MutedGray
+                        )
+                    )
+                    NavigationBarItem(
+                        selected = currentTab == AppTab.STATUS,
+                        onClick = { currentTab = AppTab.STATUS },
+                        icon = { Icon(Icons.Filled.Info, contentDescription = "สถานะเซิร์ฟเวอร์") },
+                        label = { Text("สถานะ") },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = CosmicBackground,
                             selectedTextColor = NeonBlue,
@@ -511,20 +545,37 @@ fun IrcRadioApp(viewModel: MainViewModel) {
                         modifier = Modifier.weight(1f),
                         currentChannel = currentChannel,
                         joinedChannels = joinedChannels,
-                        messages = messages.filter { it.target == null || it.target == currentChannel },
+                        messages = messages.filter { it.target == currentChannel },
                         activeUsersCount = activeChannelUsers.size,
                         chatInput = chatMessageInput,
                         currentNick = currentNick,
+                        focusRequester = chatInputFocusRequester,
                         onChatInputChange = { chatMessageInput = it },
                         onSendMessage = {
                             viewModel.ircClient.sendChatMessage(currentChannel, chatMessageInput)
                             chatMessageInput = ""
                         },
                         onChannelSelect = { viewModel.ircClient.updateCurrentChannel(it) },
-                        onLeaveChannel = { viewModel.ircClient.sendRaw("PART $it") },
+                        onLeaveChannel = { viewModel.ircClient.leaveChannelOrQuery(it) },
                         onJoinChannelClick = { showJoinChannelDialog = true },
                         onShowUserList = { showUserListDialog = true },
                         onDisconnect = { viewModel.ircClient.disconnect() }
+                    )
+                } else if (currentTab == AppTab.STATUS) {
+                    // Dedicated Server Status Console Tab
+                    StatusConsolePanel(
+                        modifier = Modifier.weight(1f),
+                        messages = messages.filter { it.target == null || it.target == "*Status*" },
+                        onSendCommand = { cmd ->
+                            viewModel.ircClient.let { client ->
+                                val trimmed = cmd.trim()
+                                if (trimmed.startsWith("/")) {
+                                    client.sendChatMessage(client.currentChannel.value, trimmed)
+                                } else {
+                                    client.sendRaw(trimmed)
+                                }
+                            }
+                        }
                     )
                 } else {
                     // Separate page/tab for the Radio Player
@@ -575,21 +626,26 @@ fun IrcRadioApp(viewModel: MainViewModel) {
             users = activeChannelUsers,
             onDismiss = { showUserListDialog = false },
             onUserClick = { user ->
-                var clean = user.trim()
-                while (clean.isNotEmpty() && (clean.startsWith("@") || clean.startsWith("+") || clean.startsWith("%") || clean.startsWith("~") || clean.startsWith("&"))) {
-                    clean = clean.substring(1)
-                }
-                val tag = "@$clean "
-                if (chatMessageInput.isEmpty()) {
-                    chatMessageInput = tag
-                } else {
-                    chatMessageInput = if (chatMessageInput.endsWith(" ")) {
-                        chatMessageInput + tag
-                    } else {
-                        chatMessageInput + " " + tag
-                    }
-                }
+                selectedUserForActions = getCleanNick(user)
+                showUserActionsDialog = true
+            },
+            onUserLongClick = { user ->
+                val clean = getCleanNick(user)
+                viewModel.ircClient.openQuery(clean)
                 showUserListDialog = false
+                coroutineScope.launch {
+                    kotlinx.coroutines.delay(100)
+                    chatInputFocusRequester.requestFocus()
+                }
+            },
+            onUserDoubleClick = { user ->
+                val clean = getCleanNick(user)
+                viewModel.ircClient.openQuery(clean)
+                showUserListDialog = false
+                coroutineScope.launch {
+                    kotlinx.coroutines.delay(100)
+                    chatInputFocusRequester.requestFocus()
+                }
             }
         )
     }
@@ -610,6 +666,24 @@ fun IrcRadioApp(viewModel: MainViewModel) {
         SettingsDialog(
             ircClient = viewModel.ircClient,
             onDismiss = { showSettingsDialog = false }
+        )
+    }
+
+    // Dialog: Channel List
+    if (showChannelListDialog) {
+        ChannelListDialog(
+            ircClient = viewModel.ircClient,
+            onDismiss = { showChannelListDialog = false }
+        )
+    }
+
+    // Dialog: User Actions
+    if (showUserActionsDialog && selectedUserForActions.isNotEmpty()) {
+        UserActionsDialog(
+            ircClient = viewModel.ircClient,
+            currentChannel = currentChannel,
+            username = selectedUserForActions,
+            onDismiss = { showUserActionsDialog = false }
         )
     }
 
@@ -1259,6 +1333,7 @@ fun ChatInterfacePanel(
     activeUsersCount: Int,
     chatInput: String,
     currentNick: String = "",
+    focusRequester: FocusRequester = remember { FocusRequester() },
     onChatInputChange: (String) -> Unit,
     onSendMessage: () -> Unit,
     onChannelSelect: (String) -> Unit,
@@ -1485,7 +1560,9 @@ fun ChatInterfacePanel(
                         focusedContainerColor = CosmicCard,
                         unfocusedContainerColor = CosmicCard
                     ),
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(focusRequester),
                     shape = RoundedCornerShape(12.dp)
                 )
 
@@ -1987,12 +2064,15 @@ fun parseMircColors(input: String): AnnotatedString {
     return finalBuilder.toAnnotatedString()
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun UserListDialog(
     channel: String,
     users: Set<String>,
     onDismiss: () -> Unit,
-    onUserClick: (String) -> Unit = {}
+    onUserClick: (String) -> Unit = {},
+    onUserLongClick: (String) -> Unit = {},
+    onUserDoubleClick: (String) -> Unit = {}
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -2018,35 +2098,85 @@ fun UserListDialog(
                         textAlign = TextAlign.Center
                     )
                 } else {
+                    val sortedUsers = remember(users) {
+                        users.toList().sortedWith(compareBy<String> { u ->
+                            when {
+                                u.startsWith("~") -> 1
+                                u.startsWith("&") -> 2
+                                u.startsWith("@") -> 3
+                                u.startsWith("%") -> 4
+                                u.startsWith("+") -> 5
+                                else -> 6
+                            }
+                        }.thenBy { getCleanNick(it).lowercase() })
+                    }
                     LazyColumn(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(users.toList()) { user ->
+                        items(sortedUsers) { user ->
+                            val cleanNick = getCleanNick(user)
+                            val prefix = getPrefix(user)
+                            val roleText = when (prefix) {
+                                "~" -> "Owner"
+                                "&" -> "Admin"
+                                "@" -> "Op"
+                                "%" -> "Half-Op"
+                                "+" -> "Voice"
+                                else -> "Member"
+                            }
+                            val roleColor = when (prefix) {
+                                "~" -> Color(0xFFE91E63)
+                                "&" -> Color(0xFF9C27B0)
+                                "@" -> Color(0xFFFF5722)
+                                "%" -> Color(0xFFFF9800)
+                                "+" -> Color(0xFF4CAF50)
+                                else -> MutedGray
+                            }
+
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(CosmicCardLight.copy(alpha = 0.5f))
-                                    .clickable { onUserClick(user) }
+                                    .combinedClickable(
+                                        onClick = { onUserClick(user) },
+                                        onLongClick = { onUserLongClick(user) },
+                                        onDoubleClick = { onUserDoubleClick(user) }
+                                    )
                                     .padding(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 AvatarView(
-                                    senderName = user,
+                                    senderName = cleanNick,
                                     size = 28.dp,
-                                    fallbackBgColor = getNickColor(user),
+                                    fallbackBgColor = getNickColor(cleanNick),
                                     fallbackTextColor = CosmicBackground,
                                     fontSize = 12.sp
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    text = user,
-                                    color = SoftWhite,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = cleanNick,
+                                        color = SoftWhite,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(roleColor.copy(alpha = 0.2f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = roleText,
+                                        color = roleColor,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
                         }
                     }
@@ -2601,5 +2731,408 @@ fun SettingsDialog(
 
 enum class AppTab {
     CHAT,
+    STATUS,
     RADIO
+}
+
+@Composable
+fun StatusConsolePanel(
+    modifier: Modifier = Modifier,
+    messages: List<IrcMessage>,
+    onSendCommand: (String) -> Unit
+) {
+    var cmdInput by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
+        }
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(CosmicBackground)
+            .padding(8.dp)
+    ) {
+        Card(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = CosmicCard),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                items(messages) { msg ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(
+                            text = "[${msg.sender}] ",
+                            color = NeonCyan,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        val textAnnotated = parseMircColors(msg.text)
+                        Text(
+                            text = textAnnotated,
+                            color = SoftWhite,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = cmdInput,
+                onValueChange = { cmdInput = it },
+                placeholder = { Text("ป้อนคำสั่งดิบหรือข้อความแชท (เช่น /JOIN #channel)...") },
+                maxLines = 1,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = NeonBlue,
+                    unfocusedBorderColor = CosmicCardLight,
+                    focusedTextColor = SoftWhite,
+                    unfocusedTextColor = SoftWhite,
+                    focusedContainerColor = CosmicCard,
+                    unfocusedContainerColor = CosmicCard
+                ),
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(12.dp),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Send
+                ),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                    onSend = {
+                        if (cmdInput.trim().isNotEmpty()) {
+                            onSendCommand(cmdInput)
+                            cmdInput = ""
+                        }
+                    }
+                )
+            )
+
+            IconButton(
+                onClick = {
+                    if (cmdInput.trim().isNotEmpty()) {
+                        onSendCommand(cmdInput)
+                        cmdInput = ""
+                    }
+                },
+                enabled = cmdInput.trim().isNotEmpty(),
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(if (cmdInput.trim().isNotEmpty()) NeonBlue else CosmicCardLight)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Send,
+                    contentDescription = "ส่งคำสั่ง",
+                    tint = SoftWhite
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ChannelListDialog(
+    ircClient: com.example.IrcClient,
+    onDismiss: () -> Unit
+) {
+    val channelsList by ircClient.serverChannelsList.collectAsStateWithLifecycle()
+    val isFetching by ircClient.isFetchingChannelList.collectAsStateWithLifecycle()
+    var searchQuery by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "รายชื่อห้องแชทเซิร์ฟเวอร์",
+                    color = SoftWhite,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium
+                )
+                if (isFetching) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = NeonBlue
+                    )
+                } else {
+                    IconButton(onClick = { ircClient.fetchChannelList() }) {
+                        Icon(Icons.Filled.Refresh, contentDescription = "โหลดใหม่", tint = NeonCyan)
+                    }
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 400.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("ค้นหาชื่อห้องหรือหัวข้อ...") },
+                    maxLines = 1,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = NeonBlue,
+                        unfocusedBorderColor = CosmicCardLight,
+                        focusedTextColor = SoftWhite,
+                        unfocusedTextColor = SoftWhite,
+                        focusedContainerColor = CosmicCard,
+                        unfocusedContainerColor = CosmicCard
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+
+                Box(modifier = Modifier.weight(1f)) {
+                    if (isFetching && channelsList.isEmpty()) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.align(Alignment.Center),
+                            color = NeonBlue
+                        )
+                    } else if (channelsList.isEmpty()) {
+                        Text(
+                            text = "ไม่พบห้องแชท หรือเซิร์ฟเวอร์ไม่ได้ส่งผลลัพธ์",
+                            color = MutedGray,
+                            modifier = Modifier.align(Alignment.Center),
+                            textAlign = TextAlign.Center
+                        )
+                    } else {
+                        val filteredList = remember(channelsList, searchQuery) {
+                            channelsList.filter {
+                                it.name.contains(searchQuery, ignoreCase = true) ||
+                                        it.topic.contains(searchQuery, ignoreCase = true)
+                            }
+                        }
+
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(filteredList) { chan ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = CosmicCardLight),
+                                    onClick = {
+                                        ircClient.sendRaw("JOIN ${chan.name}")
+                                        onDismiss()
+                                    }
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = chan.name,
+                                                color = NeonCyan,
+                                                fontWeight = FontWeight.Bold,
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Person,
+                                                    contentDescription = null,
+                                                    tint = MutedGray,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(
+                                                    text = chan.usersCount.toString(),
+                                                    color = SoftWhite,
+                                                    style = MaterialTheme.typography.bodySmall
+                                                )
+                                            }
+                                        }
+                                        if (chan.topic.isNotEmpty()) {
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = chan.topic,
+                                                color = SoftWhite.copy(alpha = 0.8f),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("ปิด", color = NeonCyan)
+            }
+        },
+        containerColor = CosmicCard
+    )
+}
+
+@Composable
+fun UserActionsDialog(
+    ircClient: com.example.IrcClient,
+    currentChannel: String,
+    username: String,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "การจัดการผู้ใช้: $username",
+                color = SoftWhite,
+                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.titleMedium
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "คำสั่งผู้ใช้ในห้อง $currentChannel",
+                    color = MutedGray,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            ircClient.handleCommand("/OP $username")
+                            onDismiss()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = NeonBlue),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("OP (+o)")
+                    }
+                    Button(
+                        onClick = {
+                            ircClient.handleCommand("/DEOP $username")
+                            onDismiss()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = CosmicCardLight),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("DEOP (-o)")
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            ircClient.handleCommand("/VOICE $username")
+                            onDismiss()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = NeonCyan),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("VOICE (+v)")
+                    }
+                    Button(
+                        onClick = {
+                            ircClient.handleCommand("/DEVOICE $username")
+                            onDismiss()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = CosmicCardLight),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("DEVOICE (-v)")
+                    }
+                }
+
+                HorizontalDivider(color = CosmicCardLight, thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
+
+                Button(
+                    onClick = {
+                        ircClient.handleCommand("/KICK $username")
+                        onDismiss()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5722)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("เตะออกจากห้อง (KICK)")
+                }
+
+                Button(
+                    onClick = {
+                        ircClient.handleCommand("/BAN $username")
+                        onDismiss()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE91E63)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("แบนจากห้อง (BAN)")
+                }
+
+                Button(
+                    onClick = {
+                        ircClient.handleCommand("/UNBAN $username")
+                        onDismiss()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("ปลดแบนจากห้อง (UNBAN)")
+                }
+
+                HorizontalDivider(color = CosmicCardLight, thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
+
+                Button(
+                    onClick = {
+                        ircClient.openQuery(username)
+                        onDismiss()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NeonBlue),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("กระซิบ / คุยส่วนตัว (QUERY)")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("ปิด", color = NeonCyan)
+            }
+        },
+        containerColor = CosmicCard
+    )
 }

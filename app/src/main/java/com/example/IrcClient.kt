@@ -35,6 +35,28 @@ data class IrcMessage(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+data class IrcChannelInfo(
+    val name: String,
+    val usersCount: Int,
+    val topic: String
+)
+
+fun getCleanNick(userStr: String): String {
+    return userStr.removePrefix("~")
+        .removePrefix("&")
+        .removePrefix("@")
+        .removePrefix("%")
+        .removePrefix("+")
+}
+
+fun getPrefix(userStr: String): String {
+    return if (userStr.startsWith("~") || userStr.startsWith("&") || userStr.startsWith("@") || userStr.startsWith("%") || userStr.startsWith("+")) {
+        userStr.take(1)
+    } else {
+        ""
+    }
+}
+
 class IrcClient(private val context: android.content.Context? = null) {
     private val _connectionState = MutableStateFlow(IrcConnectionState.DISCONNECTED)
     val connectionState: StateFlow<IrcConnectionState> = _connectionState.asStateFlow()
@@ -54,8 +76,41 @@ class IrcClient(private val context: android.content.Context? = null) {
     private val _currentNick = MutableStateFlow("Thai${(1000..9999).random()}")
     val currentNick: StateFlow<String> = _currentNick.asStateFlow()
 
-    private val _quitMessage = MutableStateFlow("Quit: app.thaiirc.com - live radio V7.0")
+    private val _quitMessage = MutableStateFlow("Quit: app.thaiirc.com - live radio V8.0")
     val quitMessage: StateFlow<String> = _quitMessage.asStateFlow()
+
+    private val _serverChannelsList = MutableStateFlow<List<IrcChannelInfo>>(emptyList())
+    val serverChannelsList: StateFlow<List<IrcChannelInfo>> = _serverChannelsList.asStateFlow()
+
+    private val _isFetchingChannelList = MutableStateFlow(false)
+    val isFetchingChannelList: StateFlow<Boolean> = _isFetchingChannelList.asStateFlow()
+
+    private val tempChannelList = mutableListOf<IrcChannelInfo>()
+
+    fun fetchChannelList() {
+        tempChannelList.clear()
+        _serverChannelsList.value = emptyList()
+        _isFetchingChannelList.value = true
+        sendRaw("LIST")
+    }
+
+    fun openQuery(nick: String) {
+        if (nick.trim().isEmpty() || nick == _currentNick.value) return
+        val cleanNick = nick.trim()
+        _joinedChannels.value = _joinedChannels.value + cleanNick
+        _currentChannel.value = cleanNick
+    }
+
+    fun leaveChannelOrQuery(target: String) {
+        if (target.startsWith("#")) {
+            sendRaw("PART $target")
+        } else {
+            _joinedChannels.value = _joinedChannels.value - target
+            if (_currentChannel.value == target) {
+                _currentChannel.value = _joinedChannels.value.firstOrNull() ?: ""
+            }
+        }
+    }
 
     // Configurable connection settings
     private val _serverAddress = MutableStateFlow("irc.thaiirc.com")
@@ -434,7 +489,7 @@ class IrcClient(private val context: android.content.Context? = null) {
         }
     }
 
-    private fun handleCommand(cmd: String) {
+    fun handleCommand(cmd: String) {
         val parts = cmd.trim().split(" ", limit = 2)
         val commandName = parts[0].uppercase()
         val arg = if (parts.size > 1) parts[1] else ""
@@ -481,6 +536,55 @@ class IrcClient(private val context: android.content.Context? = null) {
                     addMessage(IrcMessage(sender = "${_currentNick.value} ➔ $target", target = target, text = text))
                 } else {
                     addSystemMessage("วิธีใช้: /msg ชื่อคนรับ ข้อความ")
+                }
+            }
+            "/OP" -> {
+                if (arg.isNotEmpty()) {
+                    sendRaw("MODE ${_currentChannel.value} +o $arg")
+                } else {
+                    addSystemMessage("วิธีใช้: /op ชื่อเล่น")
+                }
+            }
+            "/DEOP" -> {
+                if (arg.isNotEmpty()) {
+                    sendRaw("MODE ${_currentChannel.value} -o $arg")
+                } else {
+                    addSystemMessage("วิธีใช้: /deop ชื่อเล่น")
+                }
+            }
+            "/VOICE" -> {
+                if (arg.isNotEmpty()) {
+                    sendRaw("MODE ${_currentChannel.value} +v $arg")
+                } else {
+                    addSystemMessage("วิธีใช้: /voice ชื่อเล่น")
+                }
+            }
+            "/DEVOICE" -> {
+                if (arg.isNotEmpty()) {
+                    sendRaw("MODE ${_currentChannel.value} -v $arg")
+                } else {
+                    addSystemMessage("วิธีใช้: /devoice ชื่อเล่น")
+                }
+            }
+            "/KICK" -> {
+                if (arg.isNotEmpty()) {
+                    sendRaw("KICK ${_currentChannel.value} $arg :Moderation")
+                } else {
+                    addSystemMessage("วิธีใช้: /kick ชื่อเล่น")
+                }
+            }
+            "/BAN" -> {
+                if (arg.isNotEmpty()) {
+                    sendRaw("MODE ${_currentChannel.value} +b $arg!*@*")
+                } else {
+                    addSystemMessage("วิธีใช้: /ban ชื่อเล่น")
+                }
+            }
+            "/UNBAN" -> {
+                if (arg.isNotEmpty()) {
+                    sendRaw("MODE ${_currentChannel.value} -b $arg!*@*")
+                } else {
+                    addSystemMessage("วิธีใช้: /unban ชื่อเล่น")
                 }
             }
             else -> {
@@ -577,7 +681,19 @@ class IrcClient(private val context: android.content.Context? = null) {
                     val dispSender = if (isAction) "*" else senderNick
                     val dispText = if (isAction) "$senderNick $messageText" else messageText
 
-                    addMessage(IrcMessage(sender = dispSender, target = target, text = dispText))
+                    val msgTarget = if (target == _currentNick.value && !target.startsWith("#")) {
+                        senderNick
+                    } else {
+                        target
+                    }
+
+                    if (target == _currentNick.value && !target.startsWith("#")) {
+                        if (!_joinedChannels.value.contains(senderNick)) {
+                            _joinedChannels.value = _joinedChannels.value + senderNick
+                        }
+                    }
+
+                    addMessage(IrcMessage(sender = dispSender, target = msgTarget, text = dispText))
 
                     // Trigger tag notification
                     if (senderNick != _currentNick.value) {
@@ -590,6 +706,14 @@ class IrcClient(private val context: android.content.Context? = null) {
                         }
                     }
                 }
+                "NOTICE" -> {
+                    val target = if (params.isNotEmpty()) params[0] else ""
+                    if (target.startsWith("#")) {
+                        addMessage(IrcMessage(sender = senderNick, target = target, text = "📢 [Notice] $trailing"))
+                    } else {
+                        addMessage(IrcMessage(sender = if (senderNick.isNotEmpty()) senderNick else "Notice", target = "*Status*", text = trailing))
+                    }
+                }
                 "JOIN" -> {
                     val channel = if (trailing.isNotEmpty()) trailing else (if (params.isNotEmpty()) params[0] else "")
                     if (channel.isNotEmpty()) {
@@ -599,6 +723,9 @@ class IrcClient(private val context: android.content.Context? = null) {
                             addSystemMessage("คุณได้เข้าร่วมห้องแชท $channel แล้ว")
                         } else {
                             addMessage(IrcMessage(sender = "System", target = channel, text = "➡ $senderNick เข้าสู่ห้องแชท", isSystem = true))
+                            val currentList = _channelUsers.value[channel] ?: emptySet()
+                            val cleaned = currentList.filter { getCleanNick(it) != senderNick }.toSet()
+                            updateChannelUsers(channel, cleaned + senderNick)
                         }
                         sendRaw("NAMES $channel")
                     }
@@ -614,9 +741,9 @@ class IrcClient(private val context: android.content.Context? = null) {
                             addSystemMessage("คุณได้ออกจากห้องแชท $channel แล้ว")
                         } else {
                             addMessage(IrcMessage(sender = "System", target = channel, text = "⬅ $senderNick ออกจากห้องแชท", isSystem = true))
-                            // Remove from names
                             val currentList = _channelUsers.value[channel] ?: emptySet()
-                            updateChannelUsers(channel, currentList - senderNick)
+                            val cleaned = currentList.filter { getCleanNick(it) != senderNick }.toSet()
+                            updateChannelUsers(channel, cleaned)
                         }
                     }
                 }
@@ -624,9 +751,10 @@ class IrcClient(private val context: android.content.Context? = null) {
                     val reason = trailing
                     _joinedChannels.value.forEach { chan ->
                         val users = _channelUsers.value[chan] ?: emptySet()
-                        if (users.contains(senderNick)) {
+                        if (users.any { getCleanNick(it) == senderNick }) {
                             addMessage(IrcMessage(sender = "System", target = chan, text = "❌ $senderNick ออกจากการเชื่อมต่อ ($reason)", isSystem = true))
-                            updateChannelUsers(chan, users - senderNick)
+                            val cleaned = users.filter { getCleanNick(it) != senderNick }.toSet()
+                            updateChannelUsers(chan, cleaned)
                         }
                     }
                 }
@@ -639,25 +767,134 @@ class IrcClient(private val context: android.content.Context? = null) {
                         } else {
                             _joinedChannels.value.forEach { chan ->
                                 val users = _channelUsers.value[chan] ?: emptySet()
-                                if (users.contains(senderNick)) {
+                                val oldEntry = users.firstOrNull { getCleanNick(it) == senderNick }
+                                if (oldEntry != null) {
+                                    val prefix = getPrefix(oldEntry)
+                                    val newEntry = prefix + newNick
                                     addMessage(IrcMessage(sender = "System", target = chan, text = "✎ $senderNick เปลี่ยนชื่อเล่นเป็น $newNick", isSystem = true))
-                                    updateChannelUsers(chan, (users - senderNick) + newNick)
+                                    val cleaned = users.filter { getCleanNick(it) != senderNick }.toSet()
+                                    updateChannelUsers(chan, cleaned + newEntry)
                                 }
                             }
                         }
                     }
                 }
+                "KICK" -> {
+                    val channel = params.getOrNull(0) ?: ""
+                    val kickedUser = params.getOrNull(1) ?: ""
+                    val reason = if (trailing.isNotEmpty()) trailing else (params.getOrNull(2) ?: "")
+                    if (channel.isNotEmpty() && kickedUser.isNotEmpty()) {
+                        if (kickedUser == _currentNick.value) {
+                            _joinedChannels.value = _joinedChannels.value - channel
+                            if (_currentChannel.value == channel) {
+                                _currentChannel.value = _joinedChannels.value.firstOrNull() ?: ""
+                            }
+                            addSystemMessage("คุณถูกเตะออกจากห้องแชท $channel โดย $senderNick ($reason)")
+                        } else {
+                            addMessage(IrcMessage(sender = "System", target = channel, text = "⚡ $kickedUser ถูกเตะออกจากห้องแชทโดย $senderNick ($reason)", isSystem = true))
+                            val currentList = _channelUsers.value[channel] ?: emptySet()
+                            val cleaned = currentList.filter { getCleanNick(it) != kickedUser }.toSet()
+                            updateChannelUsers(channel, cleaned)
+                        }
+                    }
+                }
+                "KILL" -> {
+                    val killedUser = params.getOrNull(0) ?: ""
+                    val reason = trailing
+                    if (killedUser.isNotEmpty()) {
+                        if (killedUser == _currentNick.value) {
+                            disconnect()
+                            addSystemMessage("คุณถูก Kill จากเซิร์ฟเวอร์ ($reason)")
+                        } else {
+                            _joinedChannels.value.forEach { chan ->
+                                val users = _channelUsers.value[chan] ?: emptySet()
+                                val oldEntry = users.firstOrNull { getCleanNick(it) == killedUser }
+                                if (oldEntry != null) {
+                                    addMessage(IrcMessage(sender = "System", target = chan, text = "☠ $killedUser ถูกตัดการเชื่อมต่อจากระบบ (KILL) ($reason)", isSystem = true))
+                                    val cleaned = users.filter { getCleanNick(it) != killedUser }.toSet()
+                                    updateChannelUsers(chan, cleaned)
+                                }
+                            }
+                        }
+                    }
+                }
+                "MODE" -> {
+                    val channel = params.getOrNull(0) ?: ""
+                    val mode = params.getOrNull(1) ?: ""
+                    val targetUser = params.getOrNull(2) ?: ""
+                    if (channel.startsWith("#") && targetUser.isNotEmpty() && mode.length >= 2) {
+                        val isAdd = mode.startsWith("+")
+                        val modeChar = mode.substring(1, 2)
+                        
+                        if (modeChar == "b") {
+                            val actionStr = if (isAdd) "ถูกแบน (BAN)" else "ถูกปลดแบน (UNBAN)"
+                            addMessage(IrcMessage(sender = "System", target = channel, text = "🚫 $targetUser $actionStr ในห้องแชทนี้", isSystem = true))
+                        } else {
+                            val matchingPrefix = when (modeChar) {
+                                "q" -> "~"
+                                "a" -> "&"
+                                "o" -> "@"
+                                "h" -> "%"
+                                "v" -> "+"
+                                else -> ""
+                            }
+                            
+                            if (matchingPrefix.isNotEmpty()) {
+                                val currentList = _channelUsers.value[channel] ?: emptySet()
+                                val oldEntry = currentList.firstOrNull { getCleanNick(it) == targetUser }
+                                if (oldEntry != null) {
+                                    val newEntry = if (isAdd) {
+                                        matchingPrefix + targetUser
+                                    } else {
+                                        targetUser
+                                    }
+                                    val cleaned = currentList.filter { getCleanNick(it) != targetUser }.toSet()
+                                    updateChannelUsers(channel, cleaned + newEntry)
+                                    val actionName = if (isAdd) "แต่งตั้งสิทธิ์" else "ลดสิทธิ์"
+                                    val roleName = when (matchingPrefix) {
+                                        "~" -> "Owner"
+                                        "&" -> "Admin"
+                                        "@" -> "Operator"
+                                        "%" -> "Half-Op"
+                                        "+" -> "Voice"
+                                        else -> ""
+                                    }
+                                    addMessage(IrcMessage(sender = "System", target = channel, text = "⚙ $senderNick ได้ $actionName $roleName ให้กับ $targetUser", isSystem = true))
+                                }
+                            }
+                        }
+                    }
+                }
+                "321" -> {
+                    tempChannelList.clear()
+                    _isFetchingChannelList.value = true
+                }
+                "322" -> {
+                    _isFetchingChannelList.value = true
+                    val channelName = params.getOrNull(1) ?: ""
+                    val usersCount = params.getOrNull(2)?.toIntOrNull() ?: 0
+                    val topic = trailing
+                    if (channelName.isNotEmpty()) {
+                        tempChannelList.add(IrcChannelInfo(channelName, usersCount, topic))
+                    }
+                }
+                "323" -> {
+                    _serverChannelsList.value = tempChannelList.toList()
+                    _isFetchingChannelList.value = false
+                }
                 "353" -> {
-                    // NAMREPLY format: <client> <symbol> <channel> :[prefix]user1 [prefix]user2
                     val channel = params.getOrNull(2) ?: ""
                     if (channel.isNotEmpty()) {
                         val userList = trailing.split(" ")
-                            .map { it.replace(Regex("^[@+~&%]"), "") }
                             .filter { it.isNotEmpty() }
                             .toSet()
 
                         val currentList = _channelUsers.value[channel] ?: emptySet()
-                        updateChannelUsers(channel, currentList + userList)
+                        val currentCleaned = currentList.filter { oldUser ->
+                            val cleanOld = getCleanNick(oldUser)
+                            userList.none { getCleanNick(it) == cleanOld }
+                        }.toSet()
+                        updateChannelUsers(channel, currentCleaned + userList)
                     }
                 }
                 "366" -> {
@@ -678,31 +915,29 @@ class IrcClient(private val context: android.content.Context? = null) {
                     }
                 }
                 "903" -> {
-                    addSystemMessage("ยืนยันตัวตน SASL สำเร็จ")
+                    addMessage(IrcMessage(sender = "System", target = "*Status*", text = "ยืนยันตัวตน SASL สำเร็จ"))
                     sendRaw("CAP END")
                 }
                 "904", "905" -> {
-                    addSystemMessage("ยืนยันตัวตน SASL ล้มเหลว")
+                    addMessage(IrcMessage(sender = "System", target = "*Status*", text = "ยืนยันตัวตน SASL ล้มเหลว"))
                     if (_loginPassword.value.isNotEmpty()) {
                         lastConnectSaslFailed = true
                     }
                     sendRaw("CAP END")
                 }
-                "001", "002", "003", "004", "372", "375", "376" -> {
-                    addSystemMessage(trailing)
+                "001", "002", "003", "004", "005", "251", "252", "253", "254", "255", "396", "372", "375", "376" -> {
+                    addMessage(IrcMessage(sender = "Server", target = "*Status*", text = trailing))
                     if (command == "001") {
                         if (_loginPassword.value.isNotEmpty() && lastConnectSaslFailed) {
-                            addSystemMessage("เนื่องจากยืนยัน SASL ไม่ผ่าน ระบบจะพยายามทำการลงทะเบียนชื่อเล่นให้ท่านโดยใช้อีเมล์ user@thaiirc.com...")
+                            addMessage(IrcMessage(sender = "System", target = "*Status*", text = "เนื่องจากยืนยัน SASL ไม่ผ่าน ระบบจะพยายามทำการลงทะเบียนชื่อเล่นให้ท่านโดยใช้อีเมล์ user@thaiirc.com..."))
                             sendRaw("PRIVMSG NickServ :REGISTER ${_loginPassword.value} user@thaiirc.com")
                             lastConnectSaslFailed = false
                         }
                         scope.launch {
                             kotlinx.coroutines.delay(1000)
                             
-                            // Collect channels to join
                             val channelsToJoin = mutableSetOf<String>()
                             
-                            // 1. Configured auto-join channels
                             if (_autoJoinChannels.value.isNotEmpty()) {
                                 _autoJoinChannels.value.split(",")
                                     .map { it.trim() }
@@ -713,25 +948,20 @@ class IrcClient(private val context: android.content.Context? = null) {
                                     }
                             }
 
-                            // 2. Also ensure current channel (entered on login screen) is added
                             if (_currentChannel.value.isNotEmpty()) {
                                 channelsToJoin.add(_currentChannel.value)
                             }
                             
-                            // 3. Previously joined channels (rejoin)
                             if (_rejoinOpenedChannels.value) {
                                 _joinedChannels.value.filter { it.isNotEmpty() }.forEach {
                                     channelsToJoin.add(it)
                                 }
                             }
                             
-                            // No forced fallback to #thaiirc if empty. We support empty channel connections!
                             if (channelsToJoin.isNotEmpty()) {
-                                // Set current channel to the first one in the list
                                 val firstChan = channelsToJoin.first()
                                 _currentChannel.value = firstChan
                                 
-                                // Join all channels
                                 channelsToJoin.forEach { chan ->
                                     sendRaw("JOIN $chan")
                                 }
@@ -739,9 +969,8 @@ class IrcClient(private val context: android.content.Context? = null) {
                                 _currentChannel.value = ""
                             }
                             
-                            // 3. Auto-run commands
                             if (_autoRunCommands.value.isNotEmpty()) {
-                                kotlinx.coroutines.delay(1000) // Delay slightly to let JOIN complete
+                                kotlinx.coroutines.delay(1000)
                                 _autoRunCommands.value.split("\n")
                                     .map { it.trim() }
                                     .filter { it.isNotEmpty() }
@@ -757,7 +986,7 @@ class IrcClient(private val context: android.content.Context? = null) {
                     }
                 }
                 "433" -> {
-                    addSystemMessage("ชื่อเล่น ${_currentNick.value} ถูกใช้งานอยู่แล้ว กำลังสุ่มชื่อเล่นอื่นแทน...")
+                    addMessage(IrcMessage(sender = "System", target = "*Status*", text = "ชื่อเล่น ${_currentNick.value} ถูกใช้งานอยู่แล้ว กำลังสุ่มชื่อเล่นอื่นแทน..."))
                     val baseNick = _currentNick.value.replace("_", "")
                     val altNick = if (baseNick.length > 5) {
                         baseNick.take(5) + (100..999).random()
@@ -769,7 +998,7 @@ class IrcClient(private val context: android.content.Context? = null) {
                 }
                 else -> {
                     if (trailing.isNotEmpty()) {
-                        addSystemMessage(trailing)
+                        addMessage(IrcMessage(sender = "Server", target = "*Status*", text = trailing))
                     }
                 }
             }
